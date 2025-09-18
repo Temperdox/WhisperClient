@@ -36,7 +36,7 @@ public class AuthService {
         }
     }
 
-    /* ---------------------- WebView flow (keeps your old Discord behavior) ---------------------- */
+    /* ---------------------- WebView flow ---------------------- */
 
     private UserProfile signInViaWebView(Stage owner, String provider) throws Exception {
         final UserProfile[] out = { null };
@@ -83,7 +83,7 @@ public class AuthService {
         final CountDownLatch gotJwt = new CountDownLatch(1);
         final String[] jwtHolder = { null };
 
-        // /callback serves a little HTML that reads location.hash and posts JWT back to /token
+        // callback serves a little HTML that reads location.hash and posts JWT back to /token
         server.createContext("/callback", exchange -> {
             String html = """
                 <!doctype html><meta charset="utf-8">
@@ -101,7 +101,7 @@ public class AuthService {
             sendText(exchange, html, 200, "text/html; charset=utf-8");
         });
 
-        // /token receives ?jwt=… and signals the app
+        // token receives ?jwt=… and signals the app
         server.createContext("/token", exchange -> {
             Map<String,String> q = splitQuery(exchange.getRequestURI().getRawQuery());
             String jwt = q.get("jwt");
@@ -117,18 +117,18 @@ public class AuthService {
         server.start();
 
         try {
-            // 2) Open the system browser to your auth worker, passing app_redirect=callbackUrl
+            // Open the system browser to your auth worker, passing app_redirect=callbackUrl
             String start = Config.AUTH_WORKER + "/oauth/google?app_redirect=" +
                     URLEncoder.encode(callbackUrl, StandardCharsets.UTF_8);
             System.out.println("[Auth] System browser: " + start);
             Desktop.getDesktop().browse(URI.create(start));
 
-            // 3) Wait (max 2 minutes) for the JWT to arrive at /token
+            // Wait (max 2 minutes) for the JWT to arrive at /token
             if (!gotJwt.await(120, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Timed out waiting for Google OAuth.");
             }
 
-            // 4) Handle token like the WebView path
+            // Handle token like the WebView path
             return handleToken(jwtHolder[0], provider);
 
         } finally {
