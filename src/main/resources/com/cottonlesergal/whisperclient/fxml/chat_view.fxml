@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.cottonlesergal.whisperclient.ui.ChatController" spacing="8" padding="10">
+    <ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS">
+        <VBox fx:id="messagesBox" spacing="6"/>
+    </ScrollPane>
+    <HBox spacing="8">
+        <TextField fx:id="txtMessage" promptText="Message… " HBox.hgrow="ALWAYS"/>
+        <Button text="📎" onAction="#onAttach"/>
+        <Button text="Send" onAction="#onSend"/>
+    </HBox>
+</VBox>

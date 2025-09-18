@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>webrtc</title>
+<script>
+    window.WC = (() => {
+        let pc, dc;
+        function init(opts){
+            const iceServers = [
+                {urls: opts.stun},
+                {urls:[`turn:${opts.turnHost}:3478?transport=udp`,`turn:${opts.turnHost}:3478?transport=tcp`],
+                    username: opts.turnUser, credential: opts.turnPass}
+            ];
+            pc = new RTCPeerConnection({iceServers});
+            dc = pc.createDataChannel('chat'); dc.binaryType='arraybuffer';
+            dc.onmessage = (e) => {
+                const b = new Uint8Array(e.data);
+                const b64 = btoa(String.fromCharCode(...b));
+                if (window.java && window.java.onInbound) window.java.onInbound(b64);
+            };
+            pc.onicecandidate = (ev) => {
+                if (ev.candidate && window.java && window.java.onLocalIce)
+                    window.java.onLocalIce(JSON.stringify(ev.candidate));
+            };
+            pc.createOffer().then(o => pc.setLocalDescription(o)).then(()=>{
+                if (window.java && window.java.onLocalOffer) window.java.onLocalOffer(pc.localDescription.sdp);
+            });
+        }
+        function recvAnswer(sdp){ pc.setRemoteDescription({type:'answer', sdp}); }
+        function addIce(c){ pc.addIceCandidate(new RTCIceCandidate(JSON.parse(c))); }
+        function sendB64(b64){
+            const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+            if (dc && dc.readyState==='open') dc.send(bytes);
+        }
+        return { init, recvAnswer, addIce, sendB64 };
+    })();
+</script>

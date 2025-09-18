@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<BorderPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.cottonlesergal.whisperclient.ui.LoginController">
+    <center>
+        <VBox spacing="16" alignment="CENTER">
+            <Label text="WhisperClient" styleClass="title"/>
+            <Label text="Sign in to continue" styleClass="subtitle"/>
+            <HBox spacing="12">
+                <Button text="Sign in with Google" onAction="#onGoogle"/>
+                <Button text="Sign in with Discord" onAction="#onDiscord"/>
+            </HBox>
+            <Label fx:id="lblStatus"/>
+        </VBox>
+    </center>
+</BorderPane>

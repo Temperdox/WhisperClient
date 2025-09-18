@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.image.*?>
+<?import javafx.scene.shape.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.cottonlesergal.whisperclient.ui.MainController"
+            stylesheets="@../css/app.css">
+
+    <top>
+        <HBox styleClass="topbar" alignment="CENTER_LEFT" spacing="10">
+            <Label fx:id="lblTitle" text="Direct Messages" styleClass="title"/>
+            <Pane HBox.hgrow="ALWAYS"/>
+            <Button text="🎙" styleClass="round"/>
+            <Button text="🎥" styleClass="round"/>
+            <Button text="📎" styleClass="round"/>
+        </HBox>
+    </top>
+
+    <left>
+        <VBox prefWidth="300" styleClass="sidebar" spacing="10">
+            <padding><Insets topRightBottomLeft="12"/></padding>
+
+            <HBox spacing="8">
+                <TextField fx:id="txtSearch" promptText="Find or start a conversation…" HBox.hgrow="ALWAYS"/>
+                <Button text="Add" onAction="#onAddFriend"/>
+            </HBox>
+
+            <ListView fx:id="listSearch" prefHeight="140" styleClass="search-list"/>
+
+            <Label text="Direct Messages" styleClass="subtitle"/>
+            <ListView fx:id="listFriends" VBox.vgrow="ALWAYS"/>
+
+            <Label text="Requests" styleClass="subtitle"/>
+            <ListView fx:id="listRequests"/>
+
+            <HBox fx:id="meCard" spacing="10" alignment="CENTER_LEFT" styleClass="me-card">
+                <ImageView fx:id="imgMe" fitWidth="32" fitHeight="32">
+                    <clip><Circle radius="16" centerX="16" centerY="16"/></clip>
+                </ImageView>
+                <VBox spacing="2">
+                    <Label fx:id="lblMeName"   text="Display Name" styleClass="me-name"/>
+                    <Label fx:id="lblMeHandle" text="@username"    styleClass="me-handle"/>
+                </VBox>
+            </HBox>
+        </VBox>
+    </left>
+
+    <center>
+        <BorderPane styleClass="chat-root">
+            <center>
+                <AnchorPane fx:id="chatHost"/>
+            </center>
+            <bottom>
+                <HBox spacing="8" styleClass="composer" alignment="CENTER_LEFT">
+                    <!-- FIX: use Insets instead of padding="10" -->
+                    <padding><Insets topRightBottomLeft="10"/></padding>
+
+                    <Button text="+" styleClass="round"/>
+                    <TextArea fx:id="txtMessage" promptText="Message @friend"
+                              HBox.hgrow="ALWAYS" prefRowCount="2"/>
+                    <Button text="Send" onAction="#onSend"/>
+                </HBox>
+            </bottom>
+        </BorderPane>
+    </center>
+
+</BorderPane>
