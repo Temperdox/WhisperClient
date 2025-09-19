@@ -1,12 +1,9 @@
 package com.cottonlesergal.whisperclient.services;
 
 import com.cottonlesergal.whisperclient.core.Session;
-import com.cottonlesergal.whisperclient.models.Message;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -23,7 +20,6 @@ public class MessageStorageService {
     private static final MessageStorageService INSTANCE = new MessageStorageService();
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern SAFE_USERNAME = Pattern.compile("^[a-zA-Z0-9_-]+$");
-    private static final int PAGE_SIZE = 100;
 
     private final Path baseDir;
     private final Map<String, SecretKey> userKeys = new ConcurrentHashMap<>();
@@ -57,6 +53,8 @@ public class MessageStorageService {
             byte[] encrypted = encryptMessage(safeUsername, message);
             String filename = message.getTimestamp() + "_" + message.getId() + ".msg";
             Files.write(messagesDir.resolve(filename), encrypted);
+
+            System.out.println("[MessageStorage] Stored message from " + message.getFrom() + " to " + safeUsername);
 
         } catch (Exception e) {
             System.err.println("Failed to store message: " + e.getMessage());
@@ -168,8 +166,9 @@ public class MessageStorageService {
     private SecretKey getUserKey(String safeUsername) throws Exception {
         return userKeys.computeIfAbsent(safeUsername, username -> {
             try {
-                // Derive key from user's identity + session info
-                String keyMaterial = Session.me.getUsername() + ":" + username + ":" + Session.me.getPubKey();
+                // Simple local storage encryption - just for protecting files on disk
+                // Messages over the network are already encrypted via WebRTC/HTTPS
+                String keyMaterial = "WhisperClient:LocalStorage:" + Session.me.getUsername() + ":" + safeUsername;
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 byte[] keyBytes = digest.digest(keyMaterial.getBytes());
                 return new SecretKeySpec(keyBytes, "AES");
@@ -182,8 +181,7 @@ public class MessageStorageService {
     private byte[] encryptMessage(String safeUsername, ChatMessage message) throws Exception {
         SecretKey key = getUserKey(safeUsername);
         byte[] nonce = new byte[12];
-        SecureRandom.getInstanceStrong().generateSeed(12);
-        System.arraycopy(SecureRandom.getInstanceStrong().generateSeed(12), 0, nonce, 0, 12);
+        new SecureRandom().nextBytes(nonce);
 
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));

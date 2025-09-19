@@ -140,9 +140,11 @@ public class ChatController {
                     ChatMessage incoming = ChatMessage.fromIncoming(ev.from, text);
                     storage.storeMessage(friend.getUsername(), incoming);
 
-                    // Add to UI
-                    addMessageBubble(incoming);
-                    scrollToBottom();
+                    // Only add to UI if we're currently viewing this chat
+                    if (friend != null && friend.getUsername().equalsIgnoreCase(ev.from)) {
+                        addMessageBubble(incoming);
+                        scrollToBottom();
+                    }
                 });
             }
         });

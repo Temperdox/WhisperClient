@@ -22,8 +22,8 @@
     -fx-font-weight: 500;
 }
 
-/* Window Icons (Labels with hover effects) - FORCED IDENTICAL STYLING */
-.window-icon {
+/* Window Icons (Labels with hover effects) - NUCLEAR OPTION */
+Label.window-icon {
     -fx-text-fill: #96989d !important;
     -fx-font-size: 14px !important;
     -fx-font-weight: normal !important;
@@ -36,25 +36,12 @@
     -fx-text-alignment: CENTER !important;
 }
 
-.window-icon:hover {
+Label.window-icon:hover {
     -fx-background-color: #35373c !important;
     -fx-text-fill: #ffffff !important;
 }
 
-.close-icon {
-    -fx-text-fill: #96989d !important;
-    -fx-font-size: 14px !important;
-    -fx-font-weight: normal !important;
-    -fx-alignment: CENTER !important;
-    -fx-cursor: hand !important;
-    -fx-background-color: transparent !important;
-    -fx-border-color: transparent !important;
-    -fx-padding: 0 !important;
-    -fx-background-insets: 0 !important;
-    -fx-text-alignment: CENTER !important;
-}
-
-.close-icon:hover {
+Label.close-icon:hover {
     -fx-background-color: #f23f43 !important;
     -fx-text-fill: #ffffff !important;
 }
