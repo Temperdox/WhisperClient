@@ -11,10 +11,12 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 public class DirectoryClient {
     private static final ObjectMapper M = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
+    private final MessageChunkingService chunkingService = MessageChunkingService.getInstance();
 
     public List<UserSummary> friends() {
         try {
@@ -100,9 +102,6 @@ public class DirectoryClient {
         } catch (Exception e){ return false; }
     }
 
-    /**
-     * Decline a friend request from a specific user
-     */
     public boolean declineFriend(String from) {
         try {
             String body = "{\"from\":"+M.writeValueAsString(from)+"}";
@@ -114,9 +113,6 @@ public class DirectoryClient {
         } catch (Exception e){ return false; }
     }
 
-    /**
-     * Block a user (removes friendship if exists, declines pending requests, prevents future requests)
-     */
     public boolean blockUser(String username) {
         try {
             String body = "{\"user\":"+M.writeValueAsString(username)+"}";
@@ -128,9 +124,6 @@ public class DirectoryClient {
         } catch (Exception e){ return false; }
     }
 
-    /**
-     * Unblock a previously blocked user
-     */
     public boolean unblockUser(String username) {
         try {
             String body = "{\"user\":"+M.writeValueAsString(username)+"}";
@@ -142,9 +135,6 @@ public class DirectoryClient {
         } catch (Exception e){ return false; }
     }
 
-    /**
-     * Get list of blocked users
-     */
     public List<UserSummary> blockedUsers() {
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/blocked"))
@@ -171,15 +161,70 @@ public class DirectoryClient {
         } catch (Exception ignored) {}
     }
 
+    /**
+     * Enhanced sendChat method with chunking support for large media messages
+     */
     public void sendChat(String to, String text) {
         try {
-            String body = "{\"to\":"+M.writeValueAsString(to)+",\"text\":"+M.writeValueAsString(text)+"}";
+            // Check if message needs chunking for large media
+            String[] chunks = chunkingService.splitMessage(text);
+
+            if (chunks.length > 1) {
+                System.out.println("[DirectoryClient] Sending large message in " + chunks.length + " chunks to " + to);
+
+                // Send chunks sequentially with small delays
+                for (int i = 0; i < chunks.length; i++) {
+                    final String chunk = chunks[i];
+                    final int chunkNum = i + 1;
+
+                    // Use CompletableFuture for proper sequencing
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            // Small delay between chunks to avoid overwhelming server
+                            if (chunkNum > 1) {
+                                Thread.sleep(100); // 100ms delay between chunks
+                            }
+
+                            sendSingleMessage(to, chunk);
+                            System.out.println("[DirectoryClient] Sent chunk " + chunkNum + "/" + chunks.length);
+
+                        } catch (Exception e) {
+                            System.err.println("[DirectoryClient] Failed to send chunk " + chunkNum + ": " + e.getMessage());
+                        }
+                    });
+                }
+            } else {
+                // Regular message - send immediately
+                sendSingleMessage(to, text);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Error in sendChat: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Send a single message (used for both regular messages and chunks)
+     */
+    private void sendSingleMessage(String to, String text) {
+        try {
+            String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
             HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/message"))
                     .header("authorization","Bearer "+Config.APP_TOKEN)
                     .header("content-type","application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-            client.send(req, HttpResponse.BodyHandlers.discarding());
-        } catch (Exception e){ e.printStackTrace(); }
+
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                System.err.println("[DirectoryClient] Failed to send message. Status: " + response.statusCode() +
+                        ", Body: " + response.body());
+            }
+        } catch (Exception e){
+            System.err.println("[DirectoryClient] Error sending message: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     public List<UserSummary> search(String q) {

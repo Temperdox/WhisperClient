@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 
 public class InboxWs implements WebSocket.Listener {
     private static final ObjectMapper M = new ObjectMapper();
+    private final MessageChunkingService chunkingService = MessageChunkingService.getInstance();
     private WebSocket ws;
     private String workerUrl;
     private String username;
@@ -87,27 +88,38 @@ public class InboxWs implements WebSocket.Listener {
     @Override
     public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
         try {
-            String message = data.toString();
-            System.out.println("[InboxWs] Received message: " +
-                    (message.length() > 200 ? message.substring(0, 200) + "... (truncated)" : message));
+            String rawMessage = data.toString();
 
             // Handle ping response
-            if ("pong".equals(message.trim())) {
+            if ("pong".equals(rawMessage.trim())) {
                 System.out.println("[InboxWs] Received pong - connection is alive");
                 webSocket.request(1);
                 return null;
             }
 
-            // Check if this looks like raw base64 data (corrupted message)
-            if (!message.trim().startsWith("{") && !message.trim().startsWith("[")) {
+            // Process message through chunking service
+            String completeMessage = chunkingService.processReceivedMessage(rawMessage);
+
+            // If null, we're still waiting for more chunks
+            if (completeMessage == null) {
+                System.out.println("[InboxWs] Received chunk, waiting for more...");
+                webSocket.request(1);
+                return null;
+            }
+
+            // Log complete message length
+            System.out.println("[InboxWs] Processing complete message (length: " + completeMessage.length() + ")");
+
+            // Check if this looks like valid JSON
+            if (!completeMessage.trim().startsWith("{") && !completeMessage.trim().startsWith("[")) {
                 System.err.println("[InboxWs] Received malformed message (not JSON): " +
-                        message.substring(0, Math.min(100, message.length())) + "...");
+                        completeMessage.substring(0, Math.min(100, completeMessage.length())) + "...");
                 webSocket.request(1);
                 return null;
             }
 
             // Parse and emit event
-            JsonNode n = M.readTree(message);
+            JsonNode n = M.readTree(completeMessage);
 
             // Log the parsed event for debugging
             System.out.println("[InboxWs] Parsed event - Type: " + n.path("type").asText("") +
@@ -119,18 +131,17 @@ public class InboxWs implements WebSocket.Listener {
                     n.path("from").asText(null),
                     n.path("to").asText(null),
                     n.path("at").asLong(System.currentTimeMillis()),
-                    n.path("data").isMissingNode() ? n : n.path("data") // Handle both formats
+                    n.path("data").isMissingNode() ? n : n.path("data")
             );
 
             // Additional handling for events with top-level fields (like signal)
             if (n.has("kind")) {
-                // This is likely a signal event with kind/payload at top level
                 ev = new Event(
                         n.path("type").asText("signal"),
                         n.path("from").asText(null),
                         n.path("to").asText(null),
                         n.path("at").asLong(System.currentTimeMillis()),
-                        n // Pass the entire node as data
+                        n
                 );
             }
 
@@ -139,7 +150,7 @@ public class InboxWs implements WebSocket.Listener {
 
         } catch (Exception e) {
             System.err.println("[InboxWs] Error processing message: " + e.getMessage());
-            // Don't print the full stack trace for JSON errors, just log the issue
+            // Don't print full stack trace for JSON errors to avoid spam
             if (!(e instanceof com.fasterxml.jackson.core.JsonParseException)) {
                 e.printStackTrace();
             }
