@@ -18,7 +18,14 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.Optional;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.UUID;
 
 import java.util.concurrent.CompletableFuture;
@@ -50,21 +57,29 @@ public class MainController {
     private final AtomicLong searchSeq = new AtomicLong();
     private InboxWs inbox;
 
+    // Authentication refresh fields (NEW)
+    private Timer authRefreshTimer;
+    private boolean isRefreshingAuth = false;
+    private AuthService authService = new AuthService();
+    private Stage primaryStage; // Store reference for auth dialogs
+
     private ChatController currentChat;
     private UserSummary currentPeer;
 
     @FXML
-    private void initialize() {
+    private void initialize() throws Exception {
         setupCellFactories();
         setupEventHandlers();
         setupUI();
         setupCustomTitleBar();
+        startAutomaticAuthRefresh(); // NEW
 
         // Initialize notification manager
         Platform.runLater(() -> {
             if (customTitleBar.getScene() != null && customTitleBar.getScene().getWindow() instanceof Stage) {
                 Stage stage = (Stage) customTitleBar.getScene().getWindow();
                 notificationManager.initialize(stage);
+                primaryStage = stage; // NEW - Store for auth dialogs
             }
         });
 
@@ -72,6 +87,259 @@ public class MainController {
         refreshFriends();
         refreshPending();
     }
+
+    // ============== AUTHENTICATION REFRESH METHODS (NEW) ==============
+
+    /**
+     * Start automatic authentication monitoring and refresh
+     */
+    private void startAutomaticAuthRefresh() {
+        if (authRefreshTimer != null) {
+            authRefreshTimer.cancel();
+        }
+
+        authRefreshTimer = new Timer("AuthRefreshTimer", true);
+
+        // Check auth status every 30 seconds
+        authRefreshTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (Session.me != null && Config.APP_TOKEN != null && !isRefreshingAuth) {
+                    checkAndRefreshAuth();
+                }
+            }
+        }, 30000, 30000); // Check every 30 seconds
+
+        System.out.println("[MainController] Started automatic auth refresh monitoring");
+    }
+
+    /**
+     * Check authentication and refresh automatically if needed
+     */
+    private void checkAndRefreshAuth() {
+        try {
+            // Check if token is expired or will expire soon (NEW)
+            if (AuthService.isTokenExpired()) {
+                System.out.println("[MainController] Token expired or expiring soon, attempting automatic refresh...");
+                performAutomaticTokenRefresh();
+                return;
+            }
+
+            // Test authentication with a lightweight endpoint
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friends"))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = HttpClient.newHttpClient()
+                    .send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 401) {
+                System.out.println("[MainController] Token expired, attempting automatic refresh...");
+                performAutomaticTokenRefresh();
+            } else if (response.statusCode() == 200) {
+                // Auth is good, reset any error states
+                resetAuthErrorState();
+            }
+
+        } catch (Exception e) {
+            System.err.println("[MainController] Auth check failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Perform automatic authentication refresh (ENHANCED)
+     */
+    private void performAutomaticTokenRefresh() {
+        if (isRefreshingAuth) {
+            System.out.println("[MainController] Auth refresh already in progress, skipping");
+            return;
+        }
+
+        isRefreshingAuth = true;
+
+        String provider = Session.me != null ? Session.me.getProvider() : "google";
+
+        // Try silent token refresh first (NEW)
+        authService.refreshTokenSilently(provider).thenAccept(success -> {
+            Platform.runLater(() -> {
+                if (success) {
+                    System.out.println("[MainController] Token automatically refreshed successfully");
+
+                    // Re-register with new token
+                    new Thread(() -> {
+                        try {
+                            boolean registered = directory.registerOrUpdate(Session.me);
+                            if (registered) {
+                                Platform.runLater(() -> {
+                                    // Silently reconnect WebSocket
+                                    reconnectWebSocket();
+
+                                    // Refresh friends list
+                                    refreshFriends();
+
+                                    // Show subtle success notification
+                                    if (notificationManager != null) {
+                                        notificationManager.showToast("Connection", "Reconnected successfully",
+                                                NotificationManager.ToastType.SUCCESS);
+                                    }
+                                });
+                            }
+                        } catch (Exception e) {
+                            System.err.println("[MainController] Re-registration after token refresh failed: " + e.getMessage());
+                        } finally {
+                            isRefreshingAuth = false;
+                        }
+                    }).start();
+
+                } else {
+                    System.err.println("[MainController] Silent token refresh failed - attempting re-sign in");
+                    // Try full re-authentication as fallback (NEW)
+                    attemptAutomaticReSignIn();
+                }
+            });
+        }).exceptionally(throwable -> {
+            Platform.runLater(() -> {
+                System.err.println("[MainController] Token refresh failed: " + throwable.getMessage());
+                // Fallback to old method
+                performLegacyAuthRefresh();
+            });
+            return null;
+        });
+    }
+
+    /**
+     * Attempt automatic re-sign in as last resort (NEW)
+     */
+    private void attemptAutomaticReSignIn() {
+        if (Session.me == null) return;
+
+        String provider = Session.me.getProvider();
+
+        new Thread(() -> {
+            try {
+                System.out.println("[MainController] Attempting automatic re-sign in with " + provider);
+
+                // Try to sign in again with the same provider
+                UserProfile refreshedUser = authService.signIn(primaryStage, provider);
+
+                if (refreshedUser != null) {
+                    Platform.runLater(() -> {
+                        System.out.println("[MainController] Automatic re-sign in successful");
+
+                        // Update session
+                        Session.me = refreshedUser;
+
+                        // Re-register and reconnect
+                        new Thread(() -> {
+                            try {
+                                boolean registered = directory.registerOrUpdate(refreshedUser);
+                                if (registered) {
+                                    Platform.runLater(() -> {
+                                        reconnectWebSocket();
+                                        refreshFriends();
+                                        refreshPending();
+
+                                        if (notificationManager != null) {
+                                            notificationManager.showToast("Authentication", "Automatically signed in again",
+                                                    NotificationManager.ToastType.SUCCESS);
+                                        }
+                                    });
+                                }
+                            } catch (Exception e) {
+                                System.err.println("[MainController] Re-registration after re-sign in failed: " + e.getMessage());
+                            } finally {
+                                isRefreshingAuth = false;
+                            }
+                        }).start();
+                    });
+                } else {
+                    Platform.runLater(() -> {
+                        isRefreshingAuth = false;
+                        System.err.println("[MainController] Automatic re-sign in failed");
+
+                        // Only now show user notification
+                        if (notificationManager != null) {
+                            notificationManager.showErrorNotification("Authentication Required",
+                                    "Please restart the app to refresh your authentication.");
+                        }
+                    });
+                }
+
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    isRefreshingAuth = false;
+                    System.err.println("[MainController] Exception during automatic re-sign in: " + e.getMessage());
+                    // Fallback to legacy method
+                    performLegacyAuthRefresh();
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * Legacy auth refresh method (your original implementation)
+     */
+    private void performLegacyAuthRefresh() {
+        new Thread(() -> {
+            try {
+                System.out.println("[MainController] Attempting legacy auth refresh...");
+
+                // Try to re-register with current credentials
+                boolean success = directory.registerOrUpdate(Session.me);
+
+                if (success) {
+                    System.out.println("[MainController] Authentication automatically refreshed successfully");
+
+                    Platform.runLater(() -> {
+                        // Silently reconnect WebSocket
+                        reconnectWebSocket();
+
+                        // Refresh friends list
+                        refreshFriends();
+
+                        // Show subtle success notification
+                        if (notificationManager != null) {
+                            notificationManager.showToast("Connection", "Reconnected successfully",
+                                    NotificationManager.ToastType.SUCCESS);
+                        }
+                    });
+
+                } else {
+                    System.err.println("[MainController] Automatic auth refresh failed");
+
+                    Platform.runLater(() -> {
+                        if (notificationManager != null) {
+                            notificationManager.showErrorNotification("Connection Issue",
+                                    "Authentication refresh failed. Some features may not work properly.");
+                        }
+                    });
+                }
+
+            } catch (Exception e) {
+                System.err.println("[MainController] Exception during auth refresh: " + e.getMessage());
+                e.printStackTrace();
+
+            } finally {
+                isRefreshingAuth = false;
+            }
+        }).start();
+    }
+
+    /**
+     * Call this when you detect 401 errors in DirectoryClient or InboxWs (NEW)
+     */
+    public void on401Error(String context) {
+        System.out.println("[MainController] Detected 401 error in: " + context);
+
+        if (!isRefreshingAuth) {
+            Platform.runLater(() -> {
+                handleAuthFailure(context);
+            });
+        }
+    }
+
+    // ============== EXISTING METHODS (unchanged from your original code) ==============
 
     private void setupCustomTitleBar() {
         Platform.runLater(() -> {
@@ -108,7 +376,79 @@ public class MainController {
 
     @FXML
     private void closeWindow() {
+        // NEW - Add cleanup for auth refresh timer
+        if (authRefreshTimer != null) {
+            authRefreshTimer.cancel();
+            authRefreshTimer = null;
+        }
+
         Platform.exit();
+    }
+
+    /**
+     * Reconnect WebSocket after auth refresh
+     */
+    private void reconnectWebSocket() {
+        if (inbox != null) {
+            System.out.println("[MainController] Reconnecting WebSocket after auth refresh...");
+            inbox.disconnect();
+
+            // Small delay before reconnecting
+            new Thread(() -> {
+                try {
+                    Thread.sleep(1000); // 1 second delay
+                    Platform.runLater(() -> {
+                        inbox = null;
+                        connectToInbox();
+                    });
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+        }
+    }
+
+    /**
+     * Reset any auth error states
+     */
+    private void resetAuthErrorState() {
+        // Reset any error flags or UI states here if needed
+        // This is called when auth check succeeds
+    }
+
+    /**
+     * Handle authentication failures gracefully
+     */
+    public void handleAuthFailure(String context) {
+        System.out.println("[MainController] Handling auth failure in context: " + context);
+
+        if (!isRefreshingAuth) {
+            // Try automatic refresh first
+            performAutomaticTokenRefresh(); // This now uses the enhanced version
+        } else {
+            System.out.println("[MainController] Auth refresh already in progress");
+        }
+    }
+
+    // Update your existing connectToInbox method to handle auth failures:
+    private void connectToInbox() {
+        if (Session.me == null || Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
+            System.err.println("[MainController] Cannot connect to inbox: missing user or token");
+
+            // Try auth refresh if we have a user but no token
+            if (Session.me != null) {
+                handleAuthFailure("missing_token");
+            }
+            return;
+        }
+
+        if (inbox == null) inbox = new InboxWs();
+
+        System.out.println("[MainController] Connecting to inbox for user: " + Session.me.getUsername());
+        System.out.println("[MainController] Using token: " +
+                Config.APP_TOKEN.substring(0, Math.min(20, Config.APP_TOKEN.length())) + "...");
+
+        inbox.connect(Config.DIR_WORKER, Session.me.getUsername(), Config.APP_TOKEN);
     }
 
     private void setupCellFactories() {
@@ -119,70 +459,111 @@ public class MainController {
     }
 
     private void setupEventHandlers() {
+        // Store event handler references for cleanup if needed
+        // Note: For MainController these typically stay active for app lifetime
+
         // === INLINE MEDIA HANDLER - FOR AUTO-DOWNLOADED MEDIA ===
-        AppCtx.BUS.on("media-inline", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received inline media from: " + ev.from);
-
-            if (ev.data != null) {
-                String fileName = ev.data.path("fileName").asText("");
-                long size = ev.data.path("size").asLong(0);
-
-                System.out.println("[MainController] Processing inline media: " + fileName +
-                        " (" + formatFileSize(size) + ")");
-
-                // The message is already stored by InboxWs, just need to update UI
-
-                // If we're currently chatting with this person, refresh the chat to show new media
-                if (currentChat != null && currentPeer != null &&
-                        currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                    System.out.println("[MainController] Refreshing chat to show new media");
-
-                    // Reload the last few messages to pick up the new media message
-                    currentChat.refreshConversation();
-
-                    // Clear notification count since user is viewing the chat
-                    notificationManager.clearNotificationCount(ev.from);
-                    refreshFriendsUI();
-                }
+        AppCtx.BUS.on("media-inline", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null media-inline event or sender");
+                return;
             }
-        }));
+
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Received inline media from: " + ev.from);
+                    if (ev.data != null) {
+                        String fileName = ev.data.path("fileName").asText("");
+                        long size = ev.data.path("size").asLong(0);
+                        System.out.println("[MainController] Processing inline media: " + fileName +
+                                " (" + formatFileSize(size) + ")");
+
+                        // The message is already stored by InboxWs, just need to update UI
+                        // If we're currently chatting with this person, refresh the chat to show new media
+                        synchronized (this) {
+                            if (currentChat != null && currentPeer != null &&
+                                    currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                                System.out.println("[MainController] Refreshing chat to show new media");
+                                // Reload the last few messages to pick up the new media message
+                                currentChat.refreshConversation();
+                                // Clear notification count since user is viewing the chat
+                                notificationManager.clearNotificationCount(ev.from);
+                                refreshFriendsUI();
+                            }
+                        }
+                    } else {
+                        System.err.println("[MainController] Received inline media event with null data from: " + ev.from);
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing inline media: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            });
+        }); // No try-with-resources needed - this is a permanent listener
+
         // === INCOMING MESSAGE HANDLER WITH RATE LIMITING ===
         AppCtx.BUS.on("chat", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null chat event or sender");
+                return;
+            }
+
             // Check rate limiting first - don't even queue to UI thread if rate limited
-            if (!rateLimiter.allowMessage(ev.from)) {
-                // Message is rate limited - show a notification but don't process
-                if (rateLimiter.getRemainingCooldown(ev.from) > 4000) { // Only show notification at start of cooldown
-                    Platform.runLater(() -> {
-                        notificationManager.showToast("Rate Limited",
-                                ev.from + " is sending messages too quickly. Rate limited for 5 seconds.",
-                                NotificationManager.ToastType.WARNING);
-                    });
+            try {
+                if (!rateLimiter.allowMessage(ev.from)) {
+                    // Message is rate limited - show a notification but don't process
+                    if (rateLimiter.getRemainingCooldown(ev.from) > 4000) { // Only show notification at start of cooldown
+                        Platform.runLater(() -> {
+                            try {
+                                notificationManager.showToast("Rate Limited",
+                                        ev.from + " is sending messages too quickly. Rate limited for 5 seconds.",
+                                        NotificationManager.ToastType.WARNING);
+                            } catch (Exception e) {
+                                System.err.println("[MainController] Error showing rate limit toast: " + e.getMessage());
+                            }
+                        });
+                    }
+                    return; // Drop the message
                 }
-                return; // Drop the message
+            } catch (Exception e) {
+                System.err.println("[MainController] Error in rate limiting: " + e.getMessage());
+                // Continue processing in case of rate limiter error
             }
 
             // Process message on UI thread only if not rate limited
             Platform.runLater(() -> {
-                System.out.println("[MainController] Received chat message from: " + ev.from);
+                try {
+                    System.out.println("[MainController] Received chat message from: " + ev.from);
+                    if (ev.data == null) {
+                        System.err.println("[MainController] Received chat event with null data from: " + ev.from);
+                        return;
+                    }
 
-                if (ev.data != null) {
                     String messageText = ev.data.path("text").asText("");
                     String messageId = ev.data.path("id").asText("");
-
                     System.out.println("[MainController] Message content length: " + messageText.length());
 
                     // Check if this is a media message
-                    if (EnhancedMediaService.getInstance().isMediaMessage(messageText)) {
-                        System.out.println("[MainController] Processing received media message");
+                    EnhancedMediaService mediaService = EnhancedMediaService.getInstance();
+                    boolean isMediaMsg = false;
+                    EnhancedMediaService.MediaMessage mediaMessage = null;
 
-                        // Extract media message
-                        EnhancedMediaService.MediaMessage mediaMessage =
-                                EnhancedMediaService.getInstance().extractMediaMessage(messageText);
-
-                        if (mediaMessage != null) {
-                            System.out.println("[MainController] Extracted media: " + mediaMessage.getFileName() +
-                                    " (" + EnhancedMediaService.getInstance().formatFileSize(mediaMessage.getFileSize()) + ")");
+                    try {
+                        isMediaMsg = mediaService.isMediaMessage(messageText);
+                        if (isMediaMsg) {
+                            System.out.println("[MainController] Processing received media message");
+                            // Extract media message
+                            mediaMessage = mediaService.extractMediaMessage(messageText);
+                            if (mediaMessage != null) {
+                                System.out.println("[MainController] Extracted media: " + mediaMessage.getFileName() +
+                                        " (" + mediaService.formatFileSize(mediaMessage.getFileSize()) + ")");
+                            } else {
+                                System.err.println("[MainController] Failed to extract media message content");
+                            }
                         }
+                    } catch (Exception e) {
+                        System.err.println("[MainController] Error processing media message: " + e.getMessage());
+                        // Continue processing as regular message if media extraction fails
                     }
 
                     // Store the incoming message
@@ -191,124 +572,285 @@ public class MainController {
 
                     // Show toast notification and increment badge count
                     String displayText = messageText;
-                    if (EnhancedMediaService.getInstance().isMediaMessage(messageText)) {
-                        EnhancedMediaService.MediaMessage media =
-                                EnhancedMediaService.getInstance().extractMediaMessage(messageText);
-                        if (media != null) {
-                            displayText = "📎 " + media.getFileName();
-                        }
+                    if (isMediaMsg && mediaMessage != null) {
+                        displayText = "📎 " + mediaMessage.getFileName();
                     }
-
                     notificationManager.showMessageNotification(ev.from, displayText);
 
                     // Refresh friends list to show notification badges
                     refreshFriendsUI();
 
                     // If we're currently chatting with this person, add to UI immediately and clear badge
-                    if (currentChat != null && currentPeer != null &&
-                            currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                        System.out.println("[MainController] Adding message to current chat UI");
-                        currentChat.addMessageBubble(incomingMessage);
-                        currentChat.scrollToBottom();
-
-                        // Clear notification count since user is viewing the chat
-                        notificationManager.clearNotificationCount(ev.from);
-                        refreshFriendsUI();
+                    synchronized (this) {
+                        if (currentChat != null && currentPeer != null &&
+                                currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                            System.out.println("[MainController] Adding message to current chat UI");
+                            currentChat.addMessageBubble(incomingMessage);
+                            currentChat.scrollToBottom();
+                            // Clear notification count since user is viewing the chat
+                            notificationManager.clearNotificationCount(ev.from);
+                            refreshFriendsUI();
+                        }
                     }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing chat message: " + e.getMessage());
+                    e.printStackTrace();
                 }
             });
         });
 
         // === SIGNALING HANDLER - FOR WEBRTC ===
-        AppCtx.BUS.on("signal", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received signal from: " + ev.from +
-                    ", kind: " + (ev.data != null ? ev.data.path("kind").asText("") : "unknown"));
+        AppCtx.BUS.on("signal", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null signal event or sender");
+                return;
+            }
 
-            // Handle WebRTC signaling if needed
-            // For now, just log it
-        }));
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Received signal from: " + ev.from +
+                            ", kind: " + (ev.data != null ? ev.data.path("kind").asText("") : "unknown"));
+                    // Handle WebRTC signaling if needed
+                    // For now, just log it
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing signal: " + e.getMessage());
+                }
+            });
+        });
 
         // Server-side events (from WebSocket)
-        AppCtx.BUS.on("friend-request", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received friend request from: " + ev.from);
-            refreshPending();
-            notificationManager.showFriendRequestNotification(ev.from);
-        }));
-
-        AppCtx.BUS.on("friend-accepted", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Friend request accepted by: " + ev.from);
-            refreshFriends();
-            refreshPending();
-            notificationManager.showFriendAcceptedNotification(ev.from);
-        }));
-
-        AppCtx.BUS.on("friend-removed", ev -> Platform.runLater(() -> {
-            refreshFriends();
-            // If we were chatting with this user, clear the chat
-            if (currentPeer != null && ev.data != null && ev.data.has("user")) {
-                String removedUser = ev.data.path("user").asText("");
-                if (currentPeer.getUsername().equalsIgnoreCase(removedUser)) {
-                    clearChat();
-                }
+        AppCtx.BUS.on("friend-request", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null friend-request event or sender");
+                return;
             }
-            notificationManager.showFriendRemovedNotification(ev.from);
-        }));
 
-        AppCtx.BUS.on("user-blocked", ev -> Platform.runLater(() -> {
-            refreshFriends();
-            refreshPending();
-            if (currentPeer != null && ev.data != null && ev.data.has("user")) {
-                String blockedUser = ev.data.path("user").asText("");
-                if (currentPeer.getUsername().equalsIgnoreCase(blockedUser)) {
-                    clearChat();
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Received friend request from: " + ev.from);
+                    refreshPending();
+                    notificationManager.showFriendRequestNotification(ev.from);
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing friend request: " + e.getMessage());
                 }
+            });
+        });
+
+        AppCtx.BUS.on("friend-accepted", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null friend-accepted event or sender");
+                return;
             }
-            notificationManager.showBlockedNotification(ev.from);
-        }));
+
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Friend request accepted by: " + ev.from);
+                    refreshFriends();
+                    refreshPending();
+                    notificationManager.showFriendAcceptedNotification(ev.from);
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing friend accepted: " + e.getMessage());
+                }
+            });
+        });
+
+        AppCtx.BUS.on("friend-removed", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null friend-removed event or sender");
+                return;
+            }
+
+            Platform.runLater(() -> {
+                try {
+                    refreshFriends();
+                    // If we were chatting with this user, clear the chat
+                    synchronized (this) {
+                        if (currentPeer != null && ev.data != null && ev.data.has("user")) {
+                            String removedUser = ev.data.path("user").asText("");
+                            if (currentPeer.getUsername().equalsIgnoreCase(removedUser)) {
+                                clearChat();
+                            }
+                        }
+                    }
+                    notificationManager.showFriendRemovedNotification(ev.from);
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing friend removed: " + e.getMessage());
+                }
+            });
+        });
+
+        AppCtx.BUS.on("user-blocked", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null user-blocked event or sender");
+                return;
+            }
+
+            Platform.runLater(() -> {
+                try {
+                    refreshFriends();
+                    refreshPending();
+                    synchronized (this) {
+                        if (currentPeer != null && ev.data != null && ev.data.has("user")) {
+                            String blockedUser = ev.data.path("user").asText("");
+                            if (currentPeer.getUsername().equalsIgnoreCase(blockedUser)) {
+                                clearChat();
+                            }
+                        }
+                    }
+                    notificationManager.showBlockedNotification(ev.from);
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing user blocked: " + e.getMessage());
+                }
+            });
+        });
 
         // Profile updates
-        AppCtx.BUS.on("profile-updated", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Profile updated for: " + ev.from);
-            // Refresh friend list to show updated profiles
-            refreshFriends();
-        }));
+        AppCtx.BUS.on("profile-updated", ev -> {
+            if (ev == null || ev.from == null) {
+                System.err.println("[MainController] Received null profile-updated event or sender");
+                return;
+            }
+
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Profile updated for: " + ev.from);
+                    // Refresh friend list to show updated profiles
+                    refreshFriends();
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing profile update: " + e.getMessage());
+                }
+            });
+        });
 
         // Client-side UI events (from context menus)
-        AppCtx.BUS.on("open-chat", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            UserSummary user = findUserInFriends(targetUser);
-            if (user != null) {
-                // Clear notifications when opening chat
-                notificationManager.clearNotificationCount(targetUser);
-                openChatWith(user);
-                refreshFriendsUI(); // Refresh to clear badges
-            }
-        }));
+        AppCtx.BUS.on("open-chat", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null open-chat event or data");
+                        return;
+                    }
 
-        AppCtx.BUS.on("remove-friend", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            removeFriendAsync(targetUser);
-        }));
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (targetUser.isEmpty()) {
+                        System.err.println("[MainController] Received open-chat with empty targetUser");
+                        return;
+                    }
 
-        AppCtx.BUS.on("accept-friend", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            acceptFriendAsync(targetUser);
-        }));
+                    UserSummary user = findUserInFriends(targetUser);
+                    if (user != null) {
+                        // Clear notifications when opening chat
+                        notificationManager.clearNotificationCount(targetUser);
+                        openChatWith(user);
+                        refreshFriendsUI(); // Refresh to clear badges
+                    } else {
+                        System.err.println("[MainController] User not found in friends list: " + targetUser);
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error opening chat: " + e.getMessage());
+                }
+            });
+        });
 
-        AppCtx.BUS.on("decline-friend", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            declineFriendAsync(targetUser);
-        }));
+        AppCtx.BUS.on("remove-friend", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null remove-friend event or data");
+                        return;
+                    }
 
-        AppCtx.BUS.on("block-user", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            blockUserAsync(targetUser);
-        }));
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (!targetUser.isEmpty()) {
+                        removeFriendAsync(targetUser);
+                    } else {
+                        System.err.println("[MainController] Received remove-friend with empty targetUser");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error removing friend: " + e.getMessage());
+                }
+            });
+        });
 
-        AppCtx.BUS.on("send-friend-request", ev -> Platform.runLater(() -> {
-            String targetUser = ev.data.path("targetUser").asText("");
-            sendFriendRequestAsync(targetUser);
-        }));
+        AppCtx.BUS.on("accept-friend", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null accept-friend event or data");
+                        return;
+                    }
+
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (!targetUser.isEmpty()) {
+                        acceptFriendAsync(targetUser);
+                    } else {
+                        System.err.println("[MainController] Received accept-friend with empty targetUser");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error accepting friend: " + e.getMessage());
+                }
+            });
+        });
+
+        AppCtx.BUS.on("decline-friend", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null decline-friend event or data");
+                        return;
+                    }
+
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (!targetUser.isEmpty()) {
+                        declineFriendAsync(targetUser);
+                    } else {
+                        System.err.println("[MainController] Received decline-friend with empty targetUser");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error declining friend: " + e.getMessage());
+                }
+            });
+        });
+
+        AppCtx.BUS.on("block-user", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null block-user event or data");
+                        return;
+                    }
+
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (!targetUser.isEmpty()) {
+                        blockUserAsync(targetUser);
+                    } else {
+                        System.err.println("[MainController] Received block-user with empty targetUser");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error blocking user: " + e.getMessage());
+                }
+            });
+        });
+
+        AppCtx.BUS.on("send-friend-request", ev -> {
+            Platform.runLater(() -> {
+                try {
+                    if (ev == null || ev.data == null) {
+                        System.err.println("[MainController] Received null send-friend-request event or data");
+                        return;
+                    }
+
+                    String targetUser = ev.data.path("targetUser").asText("");
+                    if (!targetUser.isEmpty()) {
+                        sendFriendRequestAsync(targetUser);
+                    } else {
+                        System.err.println("[MainController] Received send-friend-request with empty targetUser");
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error sending friend request: " + e.getMessage());
+                }
+            });
+        });
     }
 
     private void setupUI() {
@@ -450,6 +992,7 @@ public class MainController {
         alert.showAndWait();
     }
 
+    // UPDATE: Enhanced setMe method with auth monitoring
     public void setMe(UserProfile me) {
         Session.me = me;
         Session.token = Config.APP_TOKEN; // Ensure session token is set
@@ -457,21 +1000,6 @@ public class MainController {
 
         // Initialize WebSocket connection
         connectToInbox();
-    }
-
-    private void connectToInbox() {
-        if (Session.me == null || Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
-            System.err.println("[MainController] Cannot connect to inbox: missing user or token");
-            return;
-        }
-
-        if (inbox == null) inbox = new InboxWs();
-
-        System.out.println("[MainController] Connecting to inbox for user: " + Session.me.getUsername());
-        System.out.println("[MainController] Using token: " +
-                Config.APP_TOKEN.substring(0, Math.min(20, Config.APP_TOKEN.length())) + "...");
-
-        inbox.connect(Config.DIR_WORKER, Session.me.getUsername(), Config.APP_TOKEN);
     }
 
     // Debug method for testing connection
@@ -940,6 +1468,12 @@ public class MainController {
 
     private void performLogout() {
         try {
+            // NEW - Stop auth refresh timer
+            if (authRefreshTimer != null) {
+                authRefreshTimer.cancel();
+                authRefreshTimer = null;
+            }
+
             // Disconnect WebSocket
             if (inbox != null) {
                 inbox.disconnect();

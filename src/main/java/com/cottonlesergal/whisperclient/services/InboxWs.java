@@ -390,8 +390,16 @@ public class InboxWs implements WebSocket.Listener {
 
     private void scheduleReconnect() {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            System.err.println("[InboxWs] Max reconnection attempts (" + MAX_RECONNECT_ATTEMPTS + ") reached. " +
-                    "Giving up.");
+            System.err.println("[InboxWs] Max reconnection attempts (" + MAX_RECONNECT_ATTEMPTS + ") reached.");
+            System.err.println("[InboxWs] Token may have expired. Consider re-authenticating.");
+
+            // Notify UI about authentication failure
+            Platform.runLater(() -> {
+                if (notificationManager != null) {
+                    notificationManager.showErrorNotification("Connection Lost",
+                            "Authentication failed. You may need to sign in again.");
+                }
+            });
             return;
         }
 

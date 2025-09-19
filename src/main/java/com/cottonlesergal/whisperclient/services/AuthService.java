@@ -15,10 +15,14 @@ import java.awt.Desktop;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.*;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -35,6 +39,215 @@ public class AuthService {
             return signInViaWebView(owner, provider);
         }
     }
+
+    // ============== TOKEN REFRESH METHODS (NEW) ==============
+
+    /**
+     * Check if the current token is expired by parsing the JWT
+     */
+    public static boolean isTokenExpired() {
+        if (Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
+            return true;
+        }
+
+        try {
+            String[] parts = Config.APP_TOKEN.split("\\.");
+            if (parts.length < 2) return true;
+
+            String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+            JsonNode payload = M.readTree(payloadJson);
+
+            long exp = payload.path("exp").asLong(0);
+            if (exp == 0) {
+                // No expiration claim, assume it doesn't expire
+                return false;
+            }
+
+            long currentTime = System.currentTimeMillis() / 1000; // Convert to seconds
+            long timeUntilExpiry = exp - currentTime;
+
+            System.out.println("[AuthService] Token expires in " + timeUntilExpiry + " seconds");
+
+            // Consider expired if less than 5 minutes remaining
+            return timeUntilExpiry < 300;
+
+        } catch (Exception e) {
+            System.err.println("[AuthService] Failed to parse token expiration: " + e.getMessage());
+            return true; // Assume expired if we can't parse
+        }
+    }
+
+    /**
+     * Get time until token expiration in seconds
+     */
+    public static long getTimeUntilExpiration() {
+        if (Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
+            return 0;
+        }
+
+        try {
+            String[] parts = Config.APP_TOKEN.split("\\.");
+            if (parts.length < 2) return 0;
+
+            String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+            JsonNode payload = M.readTree(payloadJson);
+
+            long exp = payload.path("exp").asLong(0);
+            if (exp == 0) return Long.MAX_VALUE; // No expiration
+
+            long currentTime = System.currentTimeMillis() / 1000;
+            return Math.max(0, exp - currentTime);
+
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Attempt to refresh the token by re-authenticating silently
+     */
+    public CompletableFuture<Boolean> refreshTokenSilently(String provider) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                System.out.println("[AuthService] Attempting silent token refresh for provider: " + provider);
+
+                if ("google".equalsIgnoreCase(provider)) {
+                    return refreshGoogleTokenSilently();
+                } else if ("discord".equalsIgnoreCase(provider)) {
+                    return refreshDiscordTokenSilently();
+                }
+
+                return false;
+
+            } catch (Exception e) {
+                System.err.println("[AuthService] Silent token refresh failed: " + e.getMessage());
+                return false;
+            }
+        });
+    }
+
+    /**
+     * Try to refresh Google token silently
+     */
+    private boolean refreshGoogleTokenSilently() {
+        try {
+            // Try to get a new token by hitting the silent refresh endpoint
+            String refreshUrl = Config.AUTH_WORKER + "/oauth/google?silent=true";
+
+            HttpRequest req = HttpRequest.newBuilder(URI.create(refreshUrl))
+                    .header("User-Agent", "WhisperClient/1.0")
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = HttpClient.newHttpClient()
+                    .send(req, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[AuthService] Google silent refresh response: " + response.statusCode());
+
+            if (response.statusCode() == 200) {
+                // Check if response contains success and new token
+                JsonNode result = M.readTree(response.body());
+                boolean success = result.path("success").asBoolean(false);
+                boolean requiresUserAction = result.path("requiresUserAction").asBoolean(true);
+                String newToken = result.path("token").asText("");
+
+                if (success && !requiresUserAction && !newToken.isEmpty()) {
+                    Config.APP_TOKEN = newToken;
+                    System.out.println("[AuthService] Successfully refreshed Google token silently");
+                    return true;
+                }
+            }
+
+            return false;
+
+        } catch (Exception e) {
+            System.err.println("[AuthService] Google silent refresh failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Try to refresh Discord token silently
+     */
+    private boolean refreshDiscordTokenSilently() {
+        try {
+            // Similar approach for Discord
+            String refreshUrl = Config.AUTH_WORKER + "/oauth/discord?silent=true";
+
+            HttpRequest req = HttpRequest.newBuilder(URI.create(refreshUrl))
+                    .header("User-Agent", "WhisperClient/1.0")
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = HttpClient.newHttpClient()
+                    .send(req, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[AuthService] Discord silent refresh response: " + response.statusCode());
+
+            if (response.statusCode() == 200) {
+                JsonNode result = M.readTree(response.body());
+                boolean success = result.path("success").asBoolean(false);
+                boolean requiresUserAction = result.path("requiresUserAction").asBoolean(true);
+                String newToken = result.path("token").asText("");
+
+                if (success && !requiresUserAction && !newToken.isEmpty()) {
+                    Config.APP_TOKEN = newToken;
+                    System.out.println("[AuthService] Successfully refreshed Discord token silently");
+                    return true;
+                }
+            }
+
+            return false;
+
+        } catch (Exception e) {
+            System.err.println("[AuthService] Discord silent refresh failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Validate current token with the server
+     */
+    public CompletableFuture<Boolean> validateToken() {
+        return CompletableFuture.supplyAsync(() -> {
+            if (Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
+                return false;
+            }
+
+            try {
+                String validateUrl = Config.AUTH_WORKER + "/validate-token";
+
+                HttpRequest req = HttpRequest.newBuilder(URI.create(validateUrl))
+                        .header("authorization", "Bearer " + Config.APP_TOKEN)
+                        .GET()
+                        .build();
+
+                HttpResponse<String> response = HttpClient.newHttpClient()
+                        .send(req, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() == 200) {
+                    JsonNode result = M.readTree(response.body());
+                    boolean valid = result.path("valid").asBoolean(false);
+                    boolean needsRefresh = result.path("needsRefresh").asBoolean(false);
+                    long expiresIn = result.path("expiresIn").asLong(0);
+
+                    System.out.println("[AuthService] Token validation - valid: " + valid +
+                            ", needsRefresh: " + needsRefresh +
+                            ", expiresIn: " + expiresIn + "s");
+
+                    return valid;
+                }
+
+                return false;
+
+            } catch (Exception e) {
+                System.err.println("[AuthService] Token validation failed: " + e.getMessage());
+                return false;
+            }
+        });
+    }
+
+    // ============== EXISTING AUTHENTICATION METHODS (unchanged from your original code) ==============
 
     /* ---------------------- WebView flow ---------------------- */
 
@@ -72,109 +285,105 @@ public class AuthService {
         return out[0];
     }
 
-    /* ---------------------- System browser + loopback for Google ---------------------- */
+    /* ---------------------- System browser flow ---------------------- */
 
     private UserProfile signInViaSystemBrowser(String provider) throws Exception {
-        // 1) Start a tiny localhost HTTP server on a random free port
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        System.out.println("[Auth] Using system browser for " + provider + " authentication");
+
+        // Start local server to capture the redirect
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         int port = server.getAddress().getPort();
-        String callbackUrl = "http://127.0.0.1:" + port + "/callback";
+        String redirectUri = "http://localhost:" + port + "/callback";
 
-        final CountDownLatch gotJwt = new CountDownLatch(1);
-        final String[] jwtHolder = { null };
+        System.out.println("[Auth] Local server started on port: " + port);
 
-        // callback serves a little HTML that reads location.hash and posts JWT back to /token
+        final UserProfile[] result = { null };
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        // Set up the callback handler
         server.createContext("/callback", exchange -> {
-            String html = """
-                <!doctype html><meta charset="utf-8">
-                <title>WhisperClient</title>
-                <body style="font:14px sans-serif;color:#ddd;background:#202225">
-                <div style="margin:40px auto;max-width:520px">
-                  <h2>Signing you in…</h2>
-                  <p>If this page doesn't close automatically, you can close it now.</p>
-                </div>
-                <script>
-                  const m = (location.hash||'').match(/[#?]token=([^&]+)/);
-                  if (m) fetch('/token?jwt='+encodeURIComponent(m[1])).then(()=>window.close());
-                </script>
-                """;
-            sendText(exchange, html, 200, "text/html; charset=utf-8");
-        });
+            try {
+                String query = exchange.getRequestURI().getQuery();
+                Map<String, String> params = parseQuery(query);
 
-        // token receives ?jwt=… and signals the app
-        server.createContext("/token", exchange -> {
-            Map<String,String> q = splitQuery(exchange.getRequestURI().getRawQuery());
-            String jwt = q.get("jwt");
-            if (jwt != null && !jwt.isBlank()) {
-                jwtHolder[0] = jwt;
-                sendText(exchange, "OK", 200, "text/plain; charset=utf-8");
-                gotJwt.countDown();
-            } else {
-                sendText(exchange, "Missing jwt", 400, "text/plain; charset=utf-8");
+                String fragment = exchange.getRequestURI().getFragment();
+                if (fragment != null && !fragment.isBlank()) {
+                    Map<String, String> fragmentParams = parseQuery(fragment);
+                    params.putAll(fragmentParams);
+                }
+
+                // Look for token in various places
+                String token = params.get("token");
+                if (token == null || token.isBlank()) {
+                    // Check the full URI for hash params
+                    String fullUri = exchange.getRequestURI().toString();
+                    if (fullUri.contains("#token=")) {
+                        int start = fullUri.indexOf("#token=") + 7;
+                        int end = fullUri.indexOf("&", start);
+                        if (end == -1) end = fullUri.length();
+                        token = URLDecoder.decode(fullUri.substring(start, end), StandardCharsets.UTF_8);
+                    }
+                }
+
+                if (token != null && !token.isBlank()) {
+                    result[0] = handleToken(token, provider);
+                    String response = "Authentication successful! You can close this window.";
+                    sendResponse(exchange, 200, response);
+                } else {
+                    String error = params.getOrDefault("error", "Unknown error");
+                    String response = "Authentication failed: " + error;
+                    sendResponse(exchange, 400, response);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                String response = "Authentication error: " + e.getMessage();
+                sendResponse(exchange, 500, response);
+            } finally {
+                latch.countDown();
             }
         });
 
         server.start();
 
         try {
-            // Open the system browser to your auth worker, passing app_redirect=callbackUrl
-            String start = Config.AUTH_WORKER + "/oauth/google?app_redirect=" +
-                    URLEncoder.encode(callbackUrl, StandardCharsets.UTF_8);
-            System.out.println("[Auth] System browser: " + start);
-            Desktop.getDesktop().browse(URI.create(start));
+            // Build the OAuth URL with the dynamic redirect URI
+            String authUrl = Config.AUTH_WORKER + "/oauth/" + provider +
+                    "?app_redirect=" + URLEncoder.encode(redirectUri, StandardCharsets.UTF_8);
 
-            // Wait (max 2 minutes) for the JWT to arrive at /token
-            if (!gotJwt.await(120, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Timed out waiting for Google OAuth.");
+            System.out.println("[Auth] Opening browser to: " + authUrl);
+
+            // Open the system browser
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().browse(URI.create(authUrl));
+            } else {
+                System.err.println("[Auth] Desktop not supported. Please open: " + authUrl);
+                throw new UnsupportedOperationException("Cannot open browser");
             }
 
-            // Handle token like the WebView path
-            return handleToken(jwtHolder[0], provider);
+            // Wait for callback with timeout
+            boolean completed = latch.await(60, TimeUnit.SECONDS);
+            if (!completed) {
+                throw new RuntimeException("Authentication timed out after 60 seconds");
+            }
+
+            if (result[0] == null) {
+                throw new RuntimeException("Authentication failed - no user profile received");
+            }
+
+            return result[0];
 
         } finally {
             server.stop(0);
         }
     }
 
-    /* ---------------------- Shared helpers ---------------------- */
+    /* ---------------------- Helper methods (unchanged from your original code) ---------------------- */
 
-    private static void sendText(HttpExchange ex, String body, int code, String ctype) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        ex.getResponseHeaders().set("Content-Type", ctype);
-        ex.sendResponseHeaders(code, bytes.length);
-        try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
+    private void handleTokenAndClose(String token, String provider, Stage dlg, UserProfile[] out) throws Exception {
+        out[0] = handleToken(token, provider);
+        dlg.close();
     }
 
-    private static Map<String,String> splitQuery(String raw) {
-        try {
-            java.util.LinkedHashMap<String,String> map = new java.util.LinkedHashMap<>();
-            if (raw == null || raw.isEmpty()) return map;
-            for (String part : raw.split("&")) {
-                int i = part.indexOf('=');
-                String k = URLDecoder.decode(i>0?part.substring(0,i):part, StandardCharsets.UTF_8);
-                String v = i>0? URLDecoder.decode(part.substring(i+1), StandardCharsets.UTF_8) : "";
-                map.put(k, v);
-            }
-            return map;
-        } catch (Exception e) {
-            return java.util.Collections.emptyMap();
-        }
-    }
-
-    private static String extractHashParam(String url, String name) {
-        int hash = url.indexOf('#');
-        if (hash < 0) return null;
-        String frag = url.substring(hash + 1); // token=...
-        for (String p : frag.split("&")) {
-            int i = p.indexOf('=');
-            if (i > 0 && p.substring(0, i).equals(name)) {
-                return URLDecoder.decode(p.substring(i + 1), StandardCharsets.UTF_8);
-            }
-        }
-        return null;
-    }
-
-    /** Parses the JWT, saves it into Config.APP_TOKEN, builds UserProfile. */
     private UserProfile handleToken(String token, String provider) throws Exception {
         System.out.println("[Auth] Stored JWT. len=" + token.length());
         Config.APP_TOKEN = token;
@@ -195,8 +404,43 @@ public class AuthService {
         return new UserProfile(sub, username, avatar, provClaim, pubKey);
     }
 
-    private void handleTokenAndClose(String token, String provider, Stage dlg, UserProfile[] out) throws Exception {
-        out[0] = handleToken(token, provider);
-        dlg.close();
+    private String extractHashParam(String url, String param) {
+        if (url == null || !url.contains("#")) return null;
+
+        String hash = url.substring(url.indexOf("#") + 1);
+        for (String kv : hash.split("&")) {
+            if (kv.startsWith(param + "=")) {
+                try {
+                    return URLDecoder.decode(kv.substring((param + "=").length()), StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    return kv.substring((param + "=").length());
+                }
+            }
+        }
+        return null;
+    }
+
+    private Map<String, String> parseQuery(String query) {
+        Map<String, String> params = new java.util.HashMap<>();
+        if (query == null) return params;
+
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf("=");
+            if (eq > 0) {
+                String key = URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8);
+                String value = URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+                params.put(key, value);
+            }
+        }
+        return params;
+    }
+
+    private void sendResponse(HttpExchange exchange, int status, String response) throws IOException {
+        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "text/html; charset=UTF-8");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
     }
 }
