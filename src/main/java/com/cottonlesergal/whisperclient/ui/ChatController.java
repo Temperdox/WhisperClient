@@ -5,11 +5,7 @@ import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.models.Friend;
 import com.cottonlesergal.whisperclient.services.*;
 import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
-import com.cottonlesergal.whisperclient.ui.components.EnhancedMessageComponents;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import javafx.animation.Animation;
-import javafx.animation.FadeTransition;
-import javafx.animation.TranslateTransition;
+import com.cottonlesergal.whisperclient.services.EnhancedMediaService.MediaMessage;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.fxml.FXML;
@@ -25,12 +21,13 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
-import javafx.util.Duration;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,8 +36,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,9 +50,8 @@ public class ChatController {
 
     private final DirectoryClient directory = new DirectoryClient();
     private final MessageStorageService storage = MessageStorageService.getInstance();
-    private final MediaMessageService mediaService = MediaMessageService.getInstance();
-    private final FileValidationService fileValidator = FileValidationService.getInstance();
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final EnhancedMediaService mediaService = EnhancedMediaService.getInstance();
+    private final NotificationManager notificationManager = NotificationManager.getInstance();
 
     private Friend friend;
     private AutoCloseable subChat;
@@ -64,19 +60,18 @@ public class ChatController {
     private final AtomicBoolean isLoading = new AtomicBoolean(false);
     private final AtomicBoolean hasMoreMessages = new AtomicBoolean(true);
 
-    private ProgressIndicator loadingIndicator;
-    private HBox loadingContainer;
+    // Track ongoing uploads
+    private final AtomicInteger activeUploads = new AtomicInteger(0);
 
     @FXML
     private void initialize() {
         setupScrollPane();
-        setupLoadingIndicator();
         setupContextMenus();
         setupDragAndDrop();
         setupKeyboardShortcuts();
         setupClipboardPaste();
 
-        System.out.println("[ChatController] Initialized with media support and file restrictions");
+        System.out.println("[ChatController] Initialized with enhanced media processing");
     }
 
     private void setupScrollPane() {
@@ -91,73 +86,11 @@ public class ChatController {
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
     }
 
-    private void setupLoadingIndicator() {
-        loadingContainer = new HBox();
-        loadingContainer.setAlignment(Pos.CENTER);
-        loadingContainer.setPadding(new Insets(10));
-        loadingContainer.setVisible(false);
-        loadingContainer.setManaged(false);
-
-        VBox shimmerContainer = new VBox(8);
-        shimmerContainer.setAlignment(Pos.CENTER);
-
-        for (int i = 0; i < 3; i++) {
-            HBox shimmerBar = createShimmerBar(i == 1 ? 200 : 150);
-            shimmerContainer.getChildren().add(shimmerBar);
-        }
-
-        loadingContainer.getChildren().add(shimmerContainer);
-    }
-
-    private HBox createShimmerBar(double width) {
-        HBox shimmerBar = new HBox();
-        shimmerBar.setPrefWidth(width);
-        shimmerBar.setPrefHeight(20);
-        shimmerBar.setMaxWidth(width);
-        shimmerBar.setStyle("-fx-background-color: #3b3f45; -fx-background-radius: 10;");
-
-        Region shimmerOverlay = new Region();
-        shimmerOverlay.setPrefSize(50, 20);
-        shimmerOverlay.setStyle(
-                "-fx-background-color: linear-gradient(to right, " +
-                        "transparent, rgba(255,255,255,0.3), transparent); " +
-                        "-fx-background-radius: 10;"
-        );
-
-        shimmerBar.getChildren().add(shimmerOverlay);
-
-        TranslateTransition shimmer = new TranslateTransition(Duration.seconds(1.5), shimmerOverlay);
-        shimmer.setFromX(-50);
-        shimmer.setToX(width);
-        shimmer.setCycleCount(Animation.INDEFINITE);
-        shimmer.play();
-
-        return shimmerBar;
-    }
-
     private void setupContextMenus() {
         ContextMenu chatAreaMenu = new ContextMenu();
-
         MenuItem clearHistory = new MenuItem("Clear Message History");
         clearHistory.setOnAction(e -> clearMessageHistory());
-
-        MenuItem deleteLocalData = new MenuItem("Delete All Local Messages");
-        deleteLocalData.setOnAction(e -> deleteAllLocalMessages());
-
-        MenuItem showMediaStatus = new MenuItem("Show Media Status");
-        showMediaStatus.setOnAction(e -> showMediaStatus());
-
-        MenuItem resetMediaCount = new MenuItem("Reset Media Count");
-        resetMediaCount.setOnAction(e -> resetMediaCount());
-
-        chatAreaMenu.getItems().addAll(
-                clearHistory,
-                new SeparatorMenuItem(),
-                showMediaStatus,
-                resetMediaCount,
-                new SeparatorMenuItem(),
-                deleteLocalData
-        );
+        chatAreaMenu.getItems().add(clearHistory);
 
         messagesBox.setOnContextMenuRequested(event -> {
             chatAreaMenu.show(messagesBox, event.getScreenX(), event.getScreenY());
@@ -168,7 +101,6 @@ public class ChatController {
     private void setupDragAndDrop() {
         messagesBox.setOnDragOver(this::handleDragOver);
         messagesBox.setOnDragDropped(this::handleDragDropped);
-
         scrollPane.setOnDragOver(this::handleDragOver);
         scrollPane.setOnDragDropped(this::handleDragDropped);
     }
@@ -187,9 +119,7 @@ public class ChatController {
         if (db.hasFiles()) {
             List<File> files = db.getFiles();
 
-            FileValidationService.ValidationResult validation =
-                    fileValidator.validateFiles(files, friend.getUsername());
-
+            EnhancedMediaService.ValidationResult validation = mediaService.validateBatchUpload(files);
             if (!validation.isValid()) {
                 showError("Upload Error", validation.getErrorMessage());
                 event.setDropCompleted(false);
@@ -197,9 +127,7 @@ public class ChatController {
                 return;
             }
 
-            for (File file : files) {
-                sendFileMessage(file);
-            }
+            processBatchUpload(files);
             success = true;
         }
 
@@ -223,9 +151,7 @@ public class ChatController {
                     }
                     break;
                 case ENTER:
-                    if (event.isShiftDown()) {
-                        break;
-                    } else {
+                    if (!event.isShiftDown()) {
                         onSend();
                         event.consume();
                     }
@@ -233,24 +159,13 @@ public class ChatController {
             }
         });
 
+        messagesBox.setFocusTraversable(true);
         messagesBox.setOnKeyPressed(event -> {
-            switch (event.getCode()) {
-                case V:
-                    if (event.isControlDown()) {
-                        handlePaste();
-                        event.consume();
-                    }
-                    break;
-                case O:
-                    if (event.isControlDown()) {
-                        onAttachFile();
-                        event.consume();
-                    }
-                    break;
+            if (event.isControlDown() && event.getCode() == KeyCode.V) {
+                handlePaste();
+                event.consume();
             }
         });
-
-        messagesBox.setFocusTraversable(true);
     }
 
     private void setupClipboardPaste() {
@@ -260,72 +175,27 @@ public class ChatController {
                 event.consume();
             }
         });
-
-        messagesBox.setOnKeyPressed(event -> {
-            if (event.isControlDown() && event.getCode() == KeyCode.V) {
-                showPasteIndicator();
-                handlePaste();
-                event.consume();
-            }
-        });
-
-        scrollPane.setFocusTraversable(true);
-    }
-
-    private void showPasteIndicator() {
-        Label pasteIndicator = new Label("📋 Pasting...");
-        pasteIndicator.setStyle(
-                "-fx-text-fill: #87898c; -fx-font-size: 12px; " +
-                        "-fx-background-color: rgba(0,0,0,0.5); -fx-background-radius: 4; " +
-                        "-fx-padding: 4 8;"
-        );
-
-        messagesBox.getChildren().add(pasteIndicator);
-
-        Platform.runLater(() -> {
-            new Thread(() -> {
-                try {
-                    Thread.sleep(1000);
-                    Platform.runLater(() -> messagesBox.getChildren().remove(pasteIndicator));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }).start();
-        });
     }
 
     private void handlePaste() {
         final javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
 
-        System.out.println("[ChatController] Handling paste operation...");
-        System.out.println("  Has image: " + clipboard.hasImage());
-        System.out.println("  Has files: " + clipboard.hasFiles());
-        System.out.println("  Has string: " + clipboard.hasString());
-
         if (clipboard.hasImage()) {
-            System.out.println("[ChatController] Pasting image from clipboard");
             handlePastedImage(clipboard.getImage());
         } else if (clipboard.hasFiles()) {
-            System.out.println("[ChatController] Pasting files from clipboard");
             List<File> files = clipboard.getFiles();
 
-            FileValidationService.ValidationResult validation =
-                    fileValidator.validateFiles(files, friend.getUsername());
-
+            EnhancedMediaService.ValidationResult validation = mediaService.validateBatchUpload(files);
             if (!validation.isValid()) {
                 showError("Paste Error", validation.getErrorMessage());
                 return;
             }
 
-            for (File file : files) {
-                System.out.println("  Pasting file: " + file.getName());
-                sendFileMessage(file);
-            }
+            processBatchUpload(files);
         } else if (clipboard.hasString()) {
             String clipboardText = clipboard.getString();
             if (clipboardText != null && !clipboardText.trim().isEmpty()) {
                 if (isStandaloneUrl(clipboardText.trim())) {
-                    System.out.println("[ChatController] Pasting URL: " + clipboardText.trim());
                     txtMessage.setText(clipboardText.trim());
                     onSend();
                 } else {
@@ -345,50 +215,41 @@ public class ChatController {
         return text.matches("^https?://.*") && !text.contains(" ") && !text.contains("\n");
     }
 
-    private void handlePastedImage(javafx.scene.image.Image image) {
+    private void handlePastedImage(Image image) {
         if (friend == null) return;
-
-        showUploadProgress("Processing pasted image...");
 
         CompletableFuture.runAsync(() -> {
             try {
                 File tempFile = saveImageToTempFile(image);
                 if (tempFile != null) {
                     Platform.runLater(() -> {
-                        hideUploadProgress();
-                        sendFileMessage(tempFile);
+                        processSingleFile(tempFile);
 
+                        // Clean up temp file after processing
                         new Thread(() -> {
                             try {
-                                Thread.sleep(10000);
+                                Thread.sleep(30000); // 30 seconds
                                 tempFile.delete();
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
                         }).start();
                     });
-                } else {
-                    Platform.runLater(() -> {
-                        hideUploadProgress();
-                        showError("Paste Error", "Failed to process pasted image");
-                    });
                 }
             } catch (Exception e) {
                 Platform.runLater(() -> {
-                    hideUploadProgress();
                     showError("Paste Error", "Failed to paste image: " + e.getMessage());
                 });
             }
         });
     }
 
-    private File saveImageToTempFile(javafx.scene.image.Image image) {
+    private File saveImageToTempFile(Image image) {
         try {
             Path tempDir = Paths.get(System.getProperty("java.io.tmpdir"), "whisperclient");
             Files.createDirectories(tempDir);
 
             File tempFile = tempDir.resolve("pasted_image_" + System.currentTimeMillis() + ".png").toFile();
-
             BufferedImage bufferedImage = SwingFXUtils.fromFXImage(image, null);
             ImageIO.write(bufferedImage, "png", tempFile);
 
@@ -402,7 +263,7 @@ public class ChatController {
     @FXML
     private void onAttachFile() {
         FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Select File to Send");
+        fileChooser.setTitle("Select Files to Send (Max 10)");
 
         fileChooser.getExtensionFilters().addAll(
                 new FileChooser.ExtensionFilter("All Files", "*.*"),
@@ -413,115 +274,109 @@ public class ChatController {
         );
 
         Stage stage = (Stage) txtMessage.getScene().getWindow();
-        File selectedFile = fileChooser.showOpenDialog(stage);
+        List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
 
-        if (selectedFile != null) {
-            FileValidationService.ValidationResult validation =
-                    fileValidator.validateFile(selectedFile, friend.getUsername());
-
+        if (selectedFiles != null && !selectedFiles.isEmpty()) {
+            EnhancedMediaService.ValidationResult validation = mediaService.validateBatchUpload(selectedFiles);
             if (!validation.isValid()) {
                 showError("Upload Error", validation.getErrorMessage());
                 return;
             }
 
-            sendFileMessage(selectedFile);
+            processBatchUpload(selectedFiles);
         }
     }
 
-    private void sendFileMessage(File file) {
+    private void processBatchUpload(List<File> files) {
+        for (File file : files) {
+            processSingleFile(file);
+        }
+    }
+
+    private void processSingleFile(File file) {
         if (friend == null) return;
 
-        FileValidationService.ValidationResult validation =
-                fileValidator.validateFile(file, friend.getUsername());
+        // Create upload progress indicator
+        ProgressIndicator progressIndicator = createUploadProgress(file.getName());
+        Label statusLabel = createStatusLabel("Preparing " + file.getName() + "...");
 
-        if (!validation.isValid()) {
-            showError("Upload Error", validation.getErrorMessage());
-            return;
-        }
+        activeUploads.incrementAndGet();
+        updateUploadStatus();
 
-        showUploadProgress("Uploading " + file.getName() + "...");
+        mediaService.processFileAsync(file, status -> {
+            Platform.runLater(() -> statusLabel.setText(status));
+        }).thenAccept(mediaMessage -> {
+            Platform.runLater(() -> {
+                // Remove progress indicator
+                removeUploadProgress(progressIndicator, statusLabel);
+                activeUploads.decrementAndGet();
+                updateUploadStatus();
 
-        CompletableFuture.runAsync(() -> {
-            try {
-                MediaMessageService.EnhancedMessage enhancedMessage = mediaService.processFileUpload(file);
+                // Send media message
+                String mediaMessageText = mediaService.createMediaMessageText(mediaMessage);
+                directory.sendChat(friend.getUsername(), mediaMessageText);
 
-                Platform.runLater(() -> {
-                    hideUploadProgress();
+                // Store locally
+                ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), mediaMessageText);
+                storage.storeMessage(friend.getUsername(), outgoing);
 
-                    String fileMessage = "[FILE] " + file.getName() + " (" +
-                            fileValidator.formatFileSize(file.length()) + ")";
+                // Display media in chat
+                displayMediaMessage(mediaMessage, true);
+                scrollToBottom();
 
-                    directory.sendChat(friend.getUsername(), fileMessage);
-
-                    ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), fileMessage);
-                    storage.storeMessage(friend.getUsername(), outgoing);
-
-                    String extension = file.getName().substring(file.getName().lastIndexOf('.') + 1).toLowerCase();
-                    if (isMediaFile(extension)) {
-                        fileValidator.incrementMediaCount(friend.getUsername());
-                    }
-
-                    addEnhancedMessageBubble(enhancedMessage, true);
-                    scrollToBottom();
-
-                    updateAttachmentButtonTooltip();
-
-                    int remainingSlots = fileValidator.getRemainingMediaSlots(friend.getUsername());
-                    String successMessage = "Sent " + file.getName();
-                    if (isMediaFile(extension)) {
-                        successMessage += String.format(" (%d media slots remaining)", remainingSlots);
-                    }
-                    showNotification("File Sent", successMessage);
-                });
-
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    hideUploadProgress();
-                    showError("File Error", "Failed to send file: " + e.getMessage());
-                });
-            }
+                notificationManager.showSuccessNotification("File Sent",
+                        "Sent " + file.getName() + " (" + mediaService.formatFileSize(file.length()) + ")");
+            });
+        }).exceptionally(throwable -> {
+            Platform.runLater(() -> {
+                removeUploadProgress(progressIndicator, statusLabel);
+                activeUploads.decrementAndGet();
+                updateUploadStatus();
+                showError("Upload Failed", "Failed to upload " + file.getName() + ": " + throwable.getMessage());
+            });
+            return null;
         });
     }
 
-    private boolean isMediaFile(String extension) {
-        Set<String> mediaExtensions = Set.of(
-                "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg",
-                "mp4", "avi", "mov", "wmv", "flv", "webm", "mkv", "m4v", "3gp",
-                "mp3", "wav", "ogg", "m4a", "aac", "flac", "wma"
-        );
-        return mediaExtensions.contains(extension);
+    private ProgressIndicator createUploadProgress(String fileName) {
+        ProgressIndicator progress = new ProgressIndicator();
+        progress.setPrefSize(20, 20);
+
+        HBox progressContainer = new HBox(8);
+        progressContainer.setAlignment(Pos.CENTER_LEFT);
+        progressContainer.setPadding(new Insets(8));
+        progressContainer.getStyleClass().add("upload-progress-container");
+        progressContainer.setId("upload-" + fileName.hashCode());
+
+        Label fileLabel = new Label(fileName);
+        fileLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 12px;");
+
+        progressContainer.getChildren().addAll(progress, fileLabel);
+        messagesBox.getChildren().add(progressContainer);
+
+        return progress;
     }
 
-    private void showUploadProgress(String message) {
-        if (txtMessage.getParent() instanceof HBox) {
-            HBox parent = (HBox) txtMessage.getParent();
-
-            HBox progressBox = new HBox(8);
-            progressBox.setAlignment(Pos.CENTER_LEFT);
-            progressBox.setId("upload-progress");
-
-            ProgressIndicator progress = new ProgressIndicator();
-            progress.setPrefSize(16, 16);
-
-            Label progressLabel = new Label(message);
-            progressLabel.setStyle("-fx-text-fill: #87898c; -fx-font-size: 12px;");
-
-            progressBox.getChildren().addAll(progress, progressLabel);
-
-            if (parent.getParent() instanceof VBox) {
-                VBox grandParent = (VBox) parent.getParent();
-                grandParent.getChildren().add(grandParent.getChildren().size() - 1, progressBox);
-            }
-        }
+    private Label createStatusLabel(String status) {
+        Label statusLabel = new Label(status);
+        statusLabel.setStyle("-fx-text-fill: #87898c; -fx-font-size: 11px;");
+        return statusLabel;
     }
 
-    private void hideUploadProgress() {
-        if (txtMessage.getParent() instanceof HBox) {
-            HBox parent = (HBox) txtMessage.getParent();
-            if (parent.getParent() instanceof VBox) {
-                VBox grandParent = (VBox) parent.getParent();
-                grandParent.getChildren().removeIf(node -> "upload-progress".equals(node.getId()));
-            }
+    private void removeUploadProgress(ProgressIndicator progress, Label statusLabel) {
+        messagesBox.getChildren().removeIf(node -> {
+            return node instanceof HBox && ((HBox) node).getChildren().contains(progress);
+        });
+    }
+
+    private void updateUploadStatus() {
+        int uploads = activeUploads.get();
+        if (uploads > 0) {
+            btnAttach.setText(uploads + "");
+            btnAttach.setStyle("-fx-background-color: #f0b232; -fx-text-fill: white;");
+        } else {
+            btnAttach.setText("📎");
+            btnAttach.setStyle(""); // Reset to default style
         }
     }
 
@@ -530,184 +385,120 @@ public class ChatController {
         String text = txtMessage.getText();
         if (text == null || text.isBlank() || friend == null) return;
 
-        System.out.println("[ChatController] Sending message to: " + friend.getUsername() + " - " + text);
+        // Send regular text message
+        directory.sendChat(friend.getUsername(), text);
 
-        mediaService.processTextMessage(text).thenAccept(enhancedMessage -> {
-            Platform.runLater(() -> {
-                directory.sendChat(friend.getUsername(), text);
+        ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
+        storage.storeMessage(friend.getUsername(), outgoing);
 
-                ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
-                storage.storeMessage(friend.getUsername(), outgoing);
-
-                addEnhancedMessageBubble(enhancedMessage, true);
-                scrollToBottom();
-            });
-        });
-
+        addTextMessageBubble(text, true);
+        scrollToBottom();
         txtMessage.clear();
     }
 
     public void bindFriend(Friend f) {
-        System.out.println("[ChatController] Binding friend: " + f.getUsername());
         this.friend = f;
-
         messagesBox.getChildren().clear();
         currentPage.set(0);
         hasMoreMessages.set(true);
-
-        updateAttachmentButtonTooltip();
 
         if (subChat != null) {
             try { subChat.close(); } catch (Exception ignored) {}
         }
 
-        subChat = AppCtx.BUS.on("profile-updated", ev -> {
-            if (ev.from != null && friend.getUsername().equalsIgnoreCase(ev.from)) {
-                Platform.runLater(() -> {
-                    if (ev.data != null) {
-                        String newDisplay = ev.data.path("display").asText("");
-                        String newAvatar = ev.data.path("avatar").asText("");
-
-                        this.friend = new Friend(
-                                friend.getUsername(),
-                                friend.getPubKey(),
-                                friend.getInboxUrl(),
-                                newDisplay,
-                                newAvatar
-                        );
-
-                        refreshDMHeader();
-                        System.out.println("[ChatController] Updated friend profile: " + newDisplay);
-                    }
-                });
-            }
-        });
-
         loadInitialMessages();
     }
 
-    private void updateAttachmentButtonTooltip() {
-        if (btnAttach != null && friend != null) {
-            int remainingSlots = fileValidator.getRemainingMediaSlots(friend.getUsername());
-            String tooltipText = String.format("Attach File (Ctrl+O)\nMedia files: %d/10 remaining\nMax: 100MB (media), 50MB (files)",
-                    remainingSlots);
-
-            Tooltip tooltip = new Tooltip(tooltipText);
-            btnAttach.setTooltip(tooltip);
-        }
-    }
-
     private void loadInitialMessages() {
-        System.out.println("[ChatController] Loading initial messages for: " + friend.getUsername());
-
-        currentPage.set(0);
-        hasMoreMessages.set(true);
-
         CompletableFuture.supplyAsync(() -> {
             return storage.loadMessages(friend.getUsername(), 0, 100);
         }).thenAccept(messages -> Platform.runLater(() -> {
             messagesBox.getChildren().clear();
-
             addDMHeader();
 
-            if (messages.isEmpty()) {
-                System.out.println("[ChatController] No messages found, showing welcome message");
-                addWelcomeMessage();
-            } else {
-                System.out.println("[ChatController] Loaded " + messages.size() + " messages");
+            if (!messages.isEmpty()) {
                 for (int i = messages.size() - 1; i >= 0; i--) {
-                    addMessageBubble(messages.get(i));
+                    processStoredMessage(messages.get(i));
                 }
-                hasMoreMessages.set(messages.size() >= 100);
             }
-
             scrollToBottom();
-        })).exceptionally(throwable -> {
-            System.err.println("[ChatController] Error loading initial messages: " + throwable.getMessage());
-            throwable.printStackTrace();
-            Platform.runLater(() -> {
-                messagesBox.getChildren().clear();
-                addDMHeader();
-                addWelcomeMessage();
-            });
-            return null;
-        });
+        }));
+    }
+
+    private void processStoredMessage(ChatMessage message) {
+        String content = message.getContent();
+
+        if (mediaService.isMediaMessage(content)) {
+            // This is a media message - reconstruct it
+            MediaMessage mediaMessage = mediaService.extractMediaMessage(content);
+            if (mediaMessage != null) {
+                displayMediaMessage(mediaMessage, message.isFromMe());
+            } else {
+                // Fallback to text if media parsing fails
+                addTextMessageBubble(content, message.isFromMe());
+            }
+        } else {
+            // Regular text message
+            addTextMessageBubble(content, message.isFromMe());
+        }
     }
 
     private void loadMoreMessages() {
         if (isLoading.get() || !hasMoreMessages.get()) return;
-
         isLoading.set(true);
-        showLoadingIndicator();
 
         int nextPage = currentPage.incrementAndGet();
-
         CompletableFuture.supplyAsync(() -> {
             return storage.loadMessages(friend.getUsername(), nextPage, 100);
         }).thenAccept(messages -> Platform.runLater(() -> {
-            hideLoadingIndicator();
             isLoading.set(false);
-
-            if (messages.isEmpty()) {
+            if (!messages.isEmpty()) {
+                for (int i = messages.size() - 1; i >= 0; i--) {
+                    Node messageBubble = createMessageBubble(messages.get(i));
+                    messagesBox.getChildren().add(0, messageBubble);
+                }
+                hasMoreMessages.set(messages.size() >= 100);
+            } else {
                 hasMoreMessages.set(false);
-                return;
             }
-
-            double scrollPosition = scrollPane.getVvalue();
-            double contentHeight = messagesBox.getHeight();
-
-            for (int i = messages.size() - 1; i >= 0; i--) {
-                messagesBox.getChildren().add(0, createMessageBubble(messages.get(i)));
-            }
-
-            Platform.runLater(() -> {
-                double newContentHeight = messagesBox.getHeight();
-                double heightDifference = newContentHeight - contentHeight;
-                double newScrollValue = heightDifference / (messagesBox.getHeight() - scrollPane.getViewportBounds().getHeight());
-                scrollPane.setVvalue(Math.max(0, newScrollValue + scrollPosition));
-            });
-
-            hasMoreMessages.set(messages.size() >= 100);
         }));
     }
 
-    private void showLoadingIndicator() {
-        if (!messagesBox.getChildren().contains(loadingContainer)) {
-            messagesBox.getChildren().add(0, loadingContainer);
+    private void displayMediaMessage(MediaMessage mediaMessage, boolean isFromMe) {
+        VBox messageContainer = createMessageContainer(isFromMe);
+
+        // Add media content based on type
+        switch (mediaMessage.getMediaType()) {
+            case "image":
+                displayImageMessage(messageContainer, mediaMessage, isFromMe);
+                break;
+            case "video":
+                displayVideoMessage(messageContainer, mediaMessage, isFromMe);
+                break;
+            case "audio":
+                displayAudioMessage(messageContainer, mediaMessage, isFromMe);
+                break;
+            default:
+                displayFileMessage(messageContainer, mediaMessage, isFromMe);
+                break;
         }
-        loadingContainer.setVisible(true);
-        loadingContainer.setManaged(true);
 
-        FadeTransition fadeIn = new FadeTransition(Duration.millis(200), loadingContainer);
-        fadeIn.setFromValue(0);
-        fadeIn.setToValue(1);
-        fadeIn.play();
+        messagesBox.getChildren().add(messageContainer);
     }
 
-    private void hideLoadingIndicator() {
-        FadeTransition fadeOut = new FadeTransition(Duration.millis(200), loadingContainer);
-        fadeOut.setFromValue(1);
-        fadeOut.setToValue(0);
-        fadeOut.setOnFinished(e -> {
-            loadingContainer.setVisible(false);
-            loadingContainer.setManaged(false);
-            messagesBox.getChildren().remove(loadingContainer);
-        });
-        fadeOut.play();
-    }
+    private VBox createMessageContainer(boolean isFromMe) {
+        VBox container = new VBox(8);
+        container.setPadding(new Insets(4, 16, 4, 16));
 
-    private void addEnhancedMessageBubble(MediaMessageService.EnhancedMessage enhancedMessage, boolean isFromMe) {
-        VBox messageContainer = new VBox(8);
-        messageContainer.getStyleClass().add("enhanced-message-container");
-        messageContainer.setPadding(new Insets(4, 16, 4, 16));
+        HBox header = new HBox(12);
+        header.setAlignment(Pos.CENTER_LEFT);
 
-        HBox messageRow = new HBox(12);
-        messageRow.getStyleClass().add("message-row");
-        messageRow.setAlignment(Pos.TOP_LEFT);
-
+        // Avatar
         ImageView avatar = new ImageView();
         avatar.setFitWidth(32);
         avatar.setFitHeight(32);
+        Circle clip = new Circle(16, 16, 16);
+        avatar.setClip(clip);
 
         if (isFromMe && Session.me != null) {
             avatar.setImage(AvatarCache.get(Session.me.getAvatarUrl(), 32));
@@ -716,16 +507,8 @@ public class ChatController {
             avatar.setImage(AvatarCache.get(avatarUrl, 32));
         }
 
-        Circle clip = new Circle(16, 16, 16);
-        avatar.setClip(clip);
-
-        VBox contentArea = new VBox(8);
-        contentArea.setAlignment(Pos.TOP_LEFT);
-        contentArea.setMaxWidth(600);
-
-        HBox header = new HBox(8);
-        header.setAlignment(Pos.CENTER_LEFT);
-
+        // Name and timestamp
+        VBox nameArea = new VBox(2);
         Label nameLabel = new Label();
         nameLabel.getStyleClass().add("message-author");
 
@@ -735,152 +518,225 @@ public class ChatController {
             nameLabel.setText(friend != null ? friend.getDisplayName() : "Unknown");
         }
 
-        LocalDateTime dateTime = LocalDateTime.now();
-        String timeStr = dateTime.format(DateTimeFormatter.ofPattern("h:mm a"));
-        Label timestampLabel = new Label(timeStr);
-        timestampLabel.getStyleClass().add("message-timestamp");
+        Label timestamp = new Label(LocalDateTime.now().format(DateTimeFormatter.ofPattern("h:mm a")));
+        timestamp.getStyleClass().add("message-timestamp");
 
-        header.getChildren().addAll(nameLabel, timestampLabel);
-        contentArea.getChildren().add(header);
+        nameArea.getChildren().addAll(nameLabel, timestamp);
+        header.getChildren().addAll(avatar, nameArea);
+        container.getChildren().add(header);
 
-        if (enhancedMessage.getText() != null && !enhancedMessage.getText().trim().isEmpty()) {
-            Label textContent = new Label(enhancedMessage.getText());
-            textContent.setWrapText(true);
-            textContent.setMaxWidth(580);
-            textContent.getStyleClass().add("message-content");
-            contentArea.getChildren().add(textContent);
-        }
-
-        switch (enhancedMessage.getType()) {
-            case IMAGE:
-                contentArea.getChildren().add(EnhancedMessageComponents.createImageMessage(enhancedMessage));
-                break;
-            case VIDEO:
-            case AUDIO:
-            case FILE:
-                contentArea.getChildren().add(EnhancedMessageComponents.createFileMessage(enhancedMessage));
-                break;
-            case LINK_EMBED:
-                if (enhancedMessage.getLinkEmbed() != null) {
-                    Node embedComponent = createEmbedComponent(enhancedMessage.getLinkEmbed());
-                    if (embedComponent != null) {
-                        contentArea.getChildren().add(embedComponent);
-                    }
-                }
-                break;
-        }
-
-        messageRow.getChildren().addAll(avatar, contentArea);
-        messageContainer.getChildren().add(messageRow);
-        messagesBox.getChildren().add(messageContainer);
+        return container;
     }
 
-    private Node createEmbedComponent(MediaMessageService.LinkEmbed embed) {
-        switch (embed.getEmbedType()) {
-            case YOUTUBE:
-                return EnhancedMessageComponents.createYouTubeEmbed(embed);
-            case TWITTER:
-                return EnhancedMessageComponents.createTwitterEmbed(embed);
-            case BLUESKY:
-                return EnhancedMessageComponents.createBlueSkyEmbed(embed);
-            case AMAZON:
-                return EnhancedMessageComponents.createAmazonEmbed(embed);
-            case GENERIC:
-            default:
-                return EnhancedMessageComponents.createGenericEmbed(embed);
+    private void displayImageMessage(VBox container, MediaMessage mediaMessage, boolean isFromMe) {
+        try {
+            byte[] imageData = Base64.getDecoder().decode(mediaMessage.getBase64Data());
+            Image image = new Image(new ByteArrayInputStream(imageData));
+
+            ImageView imageView = new ImageView(image);
+            imageView.setFitWidth(400);
+            imageView.setPreserveRatio(true);
+            imageView.setSmooth(true);
+
+            Rectangle clip = new Rectangle();
+            clip.setArcWidth(12);
+            clip.setArcHeight(12);
+            clip.widthProperty().bind(imageView.fitWidthProperty());
+            clip.heightProperty().bind(imageView.fitHeightProperty());
+            imageView.setClip(clip);
+
+            imageView.getStyleClass().add("message-image");
+            imageView.setOnMouseClicked(e -> openImageFullscreen(image));
+
+            VBox imageContainer = new VBox(4);
+            imageContainer.getChildren().add(imageView);
+
+            Label filename = new Label(mediaMessage.getFileName());
+            filename.getStyleClass().add("media-filename");
+            imageContainer.getChildren().add(filename);
+
+            container.getChildren().add(imageContainer);
+
+        } catch (Exception e) {
+            Label errorLabel = new Label("Failed to load image: " + mediaMessage.getFileName());
+            errorLabel.getStyleClass().add("error-message");
+            container.getChildren().add(errorLabel);
         }
+    }
+
+    private void displayVideoMessage(VBox container, MediaMessage mediaMessage, boolean isFromMe) {
+        HBox videoContainer = new HBox(12);
+        videoContainer.getStyleClass().add("media-container");
+        videoContainer.setPadding(new Insets(12));
+
+        Label videoIcon = new Label("🎥");
+        videoIcon.setStyle("-fx-font-size: 32px;");
+
+        VBox videoInfo = new VBox(4);
+        Label fileName = new Label(mediaMessage.getFileName());
+        fileName.getStyleClass().add("media-filename");
+
+        Label fileSize = new Label(mediaService.formatFileSize(mediaMessage.getFileSize()));
+        fileSize.getStyleClass().add("media-filesize");
+
+        Button playButton = new Button("Download & Play");
+        playButton.getStyleClass().add("media-action-button");
+        playButton.setOnAction(e -> reconstructAndOpen(mediaMessage));
+
+        videoInfo.getChildren().addAll(fileName, fileSize, playButton);
+        videoContainer.getChildren().addAll(videoIcon, videoInfo);
+        container.getChildren().add(videoContainer);
+    }
+
+    private void displayAudioMessage(VBox container, MediaMessage mediaMessage, boolean isFromMe) {
+        HBox audioContainer = new HBox(12);
+        audioContainer.getStyleClass().add("media-container");
+        audioContainer.setPadding(new Insets(12));
+
+        Label audioIcon = new Label("🎵");
+        audioIcon.setStyle("-fx-font-size: 32px;");
+
+        VBox audioInfo = new VBox(4);
+        Label fileName = new Label(mediaMessage.getFileName());
+        fileName.getStyleClass().add("media-filename");
+
+        Label fileSize = new Label(mediaService.formatFileSize(mediaMessage.getFileSize()));
+        fileSize.getStyleClass().add("media-filesize");
+
+        Button playButton = new Button("Download & Play");
+        playButton.getStyleClass().add("media-action-button");
+        playButton.setOnAction(e -> reconstructAndOpen(mediaMessage));
+
+        audioInfo.getChildren().addAll(fileName, fileSize, playButton);
+        audioContainer.getChildren().addAll(audioIcon, audioInfo);
+        container.getChildren().add(audioContainer);
+    }
+
+    private void displayFileMessage(VBox container, MediaMessage mediaMessage, boolean isFromMe) {
+        HBox fileContainer = new HBox(12);
+        fileContainer.getStyleClass().add("media-container");
+        fileContainer.setPadding(new Insets(12));
+
+        Label fileIcon = new Label("📎");
+        fileIcon.setStyle("-fx-font-size: 32px;");
+
+        VBox fileInfo = new VBox(4);
+        Label fileName = new Label(mediaMessage.getFileName());
+        fileName.getStyleClass().add("media-filename");
+
+        Label fileSize = new Label(mediaService.formatFileSize(mediaMessage.getFileSize()));
+        fileSize.getStyleClass().add("media-filesize");
+
+        Button downloadButton = new Button("Download");
+        downloadButton.getStyleClass().add("media-action-button");
+        downloadButton.setOnAction(e -> reconstructAndOpen(mediaMessage));
+
+        fileInfo.getChildren().addAll(fileName, fileSize, downloadButton);
+        fileContainer.getChildren().addAll(fileIcon, fileInfo);
+        container.getChildren().add(fileContainer);
+    }
+
+    private void reconstructAndOpen(MediaMessage mediaMessage) {
+        ProgressIndicator progress = new ProgressIndicator();
+        progress.setPrefSize(16, 16);
+
+        Label statusLabel = new Label("Reconstructing file...");
+        statusLabel.setStyle("-fx-text-fill: #87898c; -fx-font-size: 11px;");
+
+        HBox progressContainer = new HBox(8);
+        progressContainer.setAlignment(Pos.CENTER_LEFT);
+        progressContainer.getChildren().addAll(progress, statusLabel);
+        messagesBox.getChildren().add(progressContainer);
+
+        mediaService.reconstructFileAsync(mediaMessage, status -> {
+            Platform.runLater(() -> statusLabel.setText(status));
+        }).thenAccept(reconstructedFile -> {
+            Platform.runLater(() -> {
+                messagesBox.getChildren().remove(progressContainer);
+
+                try {
+                    java.awt.Desktop.getDesktop().open(reconstructedFile);
+                    notificationManager.showSuccessNotification("File Opened",
+                            "Opened " + mediaMessage.getFileName());
+                } catch (Exception e) {
+                    showError("Open Failed", "Could not open file: " + e.getMessage());
+                }
+            });
+        }).exceptionally(throwable -> {
+            Platform.runLater(() -> {
+                messagesBox.getChildren().remove(progressContainer);
+                showError("Reconstruction Failed", throwable.getMessage());
+            });
+            return null;
+        });
+    }
+
+    private void openImageFullscreen(Image image) {
+        Stage imageStage = new Stage();
+        imageStage.setTitle("Image Viewer");
+
+        ImageView fullImageView = new ImageView(image);
+        fullImageView.setPreserveRatio(true);
+        fullImageView.setFitWidth(800);
+        fullImageView.setFitHeight(600);
+
+        ScrollPane scrollPane = new ScrollPane(fullImageView);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
+
+        javafx.scene.Scene scene = new javafx.scene.Scene(scrollPane, 820, 620);
+        imageStage.setScene(scene);
+        imageStage.show();
+    }
+
+    private void addTextMessageBubble(String text, boolean isFromMe) {
+        VBox container = createMessageContainer(isFromMe);
+
+        Label textLabel = new Label(text);
+        textLabel.setWrapText(true);
+        textLabel.setMaxWidth(580);
+        textLabel.getStyleClass().add("message-content");
+
+        container.getChildren().add(textLabel);
+        messagesBox.getChildren().add(container);
     }
 
     private Node createMessageBubble(ChatMessage message) {
-        HBox messageRow = new HBox(12);
-        messageRow.getStyleClass().add("message-row");
-        messageRow.setPadding(new Insets(4, 16, 4, 16));
+        // Check if it's a media message
+        if (mediaService.isMediaMessage(message.getContent())) {
+            MediaMessage mediaMessage = mediaService.extractMediaMessage(message.getContent());
+            if (mediaMessage != null) {
+                VBox container = createMessageContainer(message.isFromMe());
 
-        ImageView avatar = new ImageView();
-        avatar.setFitWidth(32);
-        avatar.setFitHeight(32);
+                switch (mediaMessage.getMediaType()) {
+                    case "image":
+                        displayImageMessage(container, mediaMessage, message.isFromMe());
+                        break;
+                    case "video":
+                        displayVideoMessage(container, mediaMessage, message.isFromMe());
+                        break;
+                    case "audio":
+                        displayAudioMessage(container, mediaMessage, message.isFromMe());
+                        break;
+                    default:
+                        displayFileMessage(container, mediaMessage, message.isFromMe());
+                        break;
+                }
 
-        if (message.isFromMe() && Session.me != null) {
-            avatar.setImage(AvatarCache.get(Session.me.getAvatarUrl(), 32));
-        } else {
-            String avatarUrl = friend != null ? friend.getAvatar() : "";
-            avatar.setImage(AvatarCache.get(avatarUrl, 32));
-        }
-
-        Circle clip = new Circle(16, 16, 16);
-        avatar.setClip(clip);
-
-        VBox contentArea = new VBox(4);
-        contentArea.setAlignment(Pos.TOP_LEFT);
-
-        HBox header = new HBox(8);
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        Label nameLabel = new Label();
-        nameLabel.getStyleClass().add("message-author");
-
-        if (message.isFromMe() && Session.me != null) {
-            nameLabel.setText(Session.me.getDisplayName());
-        } else {
-            nameLabel.setText(friend != null ? friend.getDisplayName() : message.getFrom());
-        }
-
-        LocalDateTime dateTime = LocalDateTime.ofInstant(
-                Instant.ofEpochMilli(message.getTimestamp()),
-                ZoneId.systemDefault()
-        );
-        String timeStr = dateTime.format(DateTimeFormatter.ofPattern("h:mm a"));
-        Label timestampLabel = new Label(timeStr);
-        timestampLabel.getStyleClass().add("message-timestamp");
-
-        header.getChildren().addAll(nameLabel, timestampLabel);
-
-        Label contentLabel = new Label(message.getContent());
-        contentLabel.setWrapText(true);
-        contentLabel.setMaxWidth(600);
-        contentLabel.getStyleClass().add("message-content");
-
-        contentArea.getChildren().addAll(header, contentLabel);
-        messageRow.getChildren().addAll(avatar, contentArea);
-
-        if (message.isFromMe()) {
-            ContextMenu messageMenu = new ContextMenu();
-
-            MenuItem copyMessage = new MenuItem("Copy Message");
-            copyMessage.setOnAction(e -> {
-                final javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
-                final javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
-                content.putString(message.getContent());
-                clipboard.setContent(content);
-                showNotification("Copied", "Message copied to clipboard");
-            });
-
-            MenuItem editMessage = new MenuItem("Edit Message");
-            editMessage.setOnAction(e -> editMessage(message, contentLabel));
-
-            MenuItem deleteMessage = new MenuItem("Delete Message");
-            deleteMessage.setOnAction(e -> deleteMessage(message, messageRow));
-
-            messageMenu.getItems().addAll(copyMessage, editMessage, new SeparatorMenuItem(), deleteMessage);
-
-            messageRow.setOnContextMenuRequested(event -> {
-                messageMenu.show(messageRow, event.getScreenX(), event.getScreenY());
-                event.consume();
-            });
-        }
-
-        return messageRow;
-    }
-
-    private void refreshDMHeader() {
-        for (int i = 0; i < messagesBox.getChildren().size(); i++) {
-            var node = messagesBox.getChildren().get(i);
-            if (node.getStyleClass().contains("dm-header")) {
-                messagesBox.getChildren().remove(i);
-                messagesBox.getChildren().add(i, createDMHeader());
-                break;
+                return container;
             }
         }
+
+        // Regular text message
+        VBox container = createMessageContainer(message.isFromMe());
+
+        Label textLabel = new Label(message.getContent());
+        textLabel.setWrapText(true);
+        textLabel.setMaxWidth(580);
+        textLabel.getStyleClass().add("message-content");
+
+        container.getChildren().add(textLabel);
+        return container;
     }
 
     private Node createDMHeader() {
@@ -891,7 +747,6 @@ public class ChatController {
         ImageView largeAvatar = new ImageView();
         largeAvatar.setFitWidth(80);
         largeAvatar.setFitHeight(80);
-
         String avatarUrl = friend != null ? friend.getAvatar() : "";
         largeAvatar.setImage(AvatarCache.get(avatarUrl, 80));
 
@@ -911,178 +766,34 @@ public class ChatController {
         return headerContainer;
     }
 
-    private void editMessage(ChatMessage message, Label contentLabel) {
-        TextInputDialog dialog = new TextInputDialog(message.getContent());
-        dialog.setTitle("Edit Message");
-        dialog.setHeaderText("Edit your message");
-        dialog.setContentText("Message:");
-
-        dialog.showAndWait().ifPresent(newContent -> {
-            if (!newContent.trim().isEmpty() && !newContent.equals(message.getContent())) {
-                message.setContent(newContent);
-                contentLabel.setText(newContent);
-                storage.storeMessage(friend.getUsername(), message);
-                showNotification("Message Edited", "Message has been updated");
-            }
-        });
-    }
-
-    private void deleteMessage(ChatMessage message, Node messageNode) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                "Are you sure you want to delete this message?",
-                ButtonType.YES, ButtonType.NO);
-        confirm.setTitle("Delete Message");
-        confirm.setHeaderText("Delete Message");
-
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.YES) {
-                messagesBox.getChildren().remove(messageNode);
-                showNotification("Message Deleted", "Message has been removed");
-            }
-        });
-    }
-
     private void clearMessageHistory() {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                "Clear message history with " + (friend != null ? friend.getDisplayName() : "this user") + "?\n\n" +
-                        "This will only clear the messages from your view. The other person will still see them.",
+                "Clear message history with " + (friend != null ? friend.getDisplayName() : "this user") + "?",
                 ButtonType.YES, ButtonType.NO);
-        confirm.setTitle("Clear Message History");
-        confirm.setHeaderText("Clear Messages");
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.YES) {
                 messagesBox.getChildren().clear();
                 addDMHeader();
-                showNotification("History Cleared", "Message history has been cleared");
             }
         });
-    }
-
-    private void deleteAllLocalMessages() {
-        Alert confirm = new Alert(Alert.AlertType.WARNING,
-                "Delete ALL message history for ALL conversations?\n\n" +
-                        "This will permanently delete all your stored messages and cannot be undone.",
-                ButtonType.YES, ButtonType.NO);
-        confirm.setTitle("Delete All Messages");
-        confirm.setHeaderText("WARNING: Permanent Deletion");
-
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.YES) {
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        Path messagesDir = Paths.get(System.getProperty("user.home"), ".whisperclient", "messages");
-                        if (Files.exists(messagesDir)) {
-                            Files.walk(messagesDir)
-                                    .sorted(java.util.Comparator.reverseOrder())
-                                    .map(Path::toFile)
-                                    .forEach(java.io.File::delete);
-                        }
-                        Platform.runLater(() -> {
-                            messagesBox.getChildren().clear();
-                            if (friend != null) addDMHeader();
-                            showNotification("All Messages Deleted", "All local message history has been permanently deleted");
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> {
-                            showError("Deletion Failed", "Could not delete message history: " + e.getMessage());
-                        });
-                    }
-                });
-            }
-        });
-    }
-
-    @FXML
-    private void showMediaStatus() {
-        if (friend == null) return;
-
-        int currentCount = fileValidator.getMediaCount(friend.getUsername());
-        int remaining = fileValidator.getRemainingMediaSlots(friend.getUsername());
-
-        String statusMessage = String.format(
-                "Media Status for %s:\n\n" +
-                        "Media files sent: %d/10\n" +
-                        "Remaining slots: %d\n\n" +
-                        "Limits:\n" +
-                        "• Photos/Videos: 100MB max\n" +
-                        "• Other files: 50MB max\n" +
-                        "• Media limit: 10 per conversation",
-                friend.getDisplayName(),
-                currentCount,
-                remaining
-        );
-
-        Alert statusDialog = new Alert(Alert.AlertType.INFORMATION);
-        statusDialog.setTitle("Media Status");
-        statusDialog.setHeaderText("File Upload Status");
-        statusDialog.setContentText(statusMessage);
-        statusDialog.showAndWait();
-    }
-
-    @FXML
-    private void resetMediaCount() {
-        if (friend == null) return;
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                "Reset media counter for " + friend.getDisplayName() + "?\n\n" +
-                        "This will allow you to send 10 more media files.",
-                ButtonType.YES, ButtonType.NO);
-
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.YES) {
-                fileValidator.resetMediaCount(friend.getUsername());
-                updateAttachmentButtonTooltip();
-                showNotification("Media Count Reset", "You can now send 10 more media files");
-            }
-        });
-    }
-
-    private void showNotification(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, message);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.showAndWait();
     }
 
     private void showError(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR, message);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.showAndWait();
+        notificationManager.showErrorNotification(title, message);
     }
 
     public void addMessageBubble(ChatMessage message) {
-        System.out.println("[ChatController] Adding message bubble from: " + message.getFrom() +
-                " (isFromMe: " + message.isFromMe() + ")");
-
-        if (message.getContent().contains("http")) {
-            mediaService.processTextMessage(message.getContent()).thenAccept(enhancedMessage -> {
-                Platform.runLater(() -> {
-                    addEnhancedMessageBubble(enhancedMessage, message.isFromMe());
-                });
-            });
-        } else {
-            Node bubble = createMessageBubble(message);
-            messagesBox.getChildren().add(bubble);
-        }
+        Node bubble = createMessageBubble(message);
+        messagesBox.getChildren().add(bubble);
     }
 
     public void scrollToBottom() {
-        Platform.runLater(() -> {
-            scrollPane.setVvalue(1.0);
-        });
-    }
-
-    private void addWelcomeMessage() {
-        Region spacer = new Region();
-        spacer.setPrefHeight(20);
-        messagesBox.getChildren().add(spacer);
+        Platform.runLater(() -> scrollPane.setVvalue(1.0));
     }
 
     private void addDMHeader() {
-        Node header = createDMHeader();
-        messagesBox.getChildren().add(header);
+        messagesBox.getChildren().add(createDMHeader());
     }
 
     public void appendLocal(String text) {
