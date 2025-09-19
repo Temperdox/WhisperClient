@@ -32,7 +32,7 @@
                    prefWidth="46" prefHeight="32"/>
 
             <!-- Maximize/Restore Button -->
-            <Label fx:id="maxIcon" text="□" styleClass="window-icon" onMouseClicked="#toggleMaximize"
+            <Label fx:id="maxIcon" text="▢" styleClass="window-icon" onMouseClicked="#toggleMaximize"
                    prefWidth="46" prefHeight="32"/>
 
             <!-- Close Button -->
@@ -51,7 +51,11 @@
                 <Pane HBox.hgrow="ALWAYS"/>
                 <Button text="🎙" styleClass="round"/>
                 <Button text="🎥" styleClass="round"/>
-                <Button text="📎" styleClass="round"/>
+                <Button text="🔍" styleClass="round"/>
+                <!-- Debug Button - Remove this in production -->
+                <Button text="🐛" styleClass="round" onAction="#debugConnection">
+                    <tooltip><Tooltip text="Debug Connection"/></tooltip>
+                </Button>
             </HBox>
         </top>
 
@@ -92,7 +96,7 @@
                                 onAction="#onSettings">
                             <tooltip><Tooltip text="Settings"/></tooltip>
                         </Button>
-                        <Button fx:id="btnLogout" text="⮕" styleClass="user-action-btn logout-btn"
+                        <Button fx:id="btnLogout" text="⭕" styleClass="user-action-btn logout-btn"
                                 onAction="#onLogout">
                             <tooltip><Tooltip text="Sign Out"/></tooltip>
                         </Button>

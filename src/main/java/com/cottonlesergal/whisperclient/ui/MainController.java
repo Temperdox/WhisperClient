@@ -5,6 +5,7 @@ import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.models.UserProfile;
 import com.cottonlesergal.whisperclient.models.UserSummary;
 import com.cottonlesergal.whisperclient.services.*;
+import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -39,6 +40,7 @@ public class MainController {
 
     private final DirectoryClient directory = new DirectoryClient();
     private final CredentialsStorageService credentialsStorage = CredentialsStorageService.getInstance();
+    private final MessageStorageService messageStorage = MessageStorageService.getInstance();
     private final AtomicLong searchSeq = new AtomicLong();
     private InboxWs inbox;
 
@@ -86,7 +88,7 @@ public class MainController {
                 stage.setMaximized(true);
             }
             // Update maximize icon
-            maxIcon.setText(stage.isMaximized() ? "❐" : "□");
+            maxIcon.setText(stage.isMaximized() ? "⬇" : "▢");
         }
     }
 
@@ -103,13 +105,52 @@ public class MainController {
     }
 
     private void setupEventHandlers() {
+        // === INCOMING MESSAGE HANDLER - THIS WAS MISSING ===
+        AppCtx.BUS.on("chat", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Received chat message from: " + ev.from);
+
+            if (ev.data != null) {
+                String messageText = ev.data.path("text").asText("");
+                String messageId = ev.data.path("id").asText("");
+
+                System.out.println("[MainController] Message content: " + messageText);
+
+                // Store the incoming message
+                ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
+                messageStorage.storeMessage(ev.from, incomingMessage);
+
+                // If we're currently chatting with this person, add to UI immediately
+                if (currentChat != null && currentPeer != null &&
+                        currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                    System.out.println("[MainController] Adding message to current chat UI");
+                    currentChat.addMessageBubble(incomingMessage);
+                    currentChat.scrollToBottom();
+                }
+
+                // Show notification for new message
+                showNotification("New Message", "Message from " + ev.from + ": " +
+                        (messageText.length() > 50 ? messageText.substring(0, 50) + "..." : messageText));
+            }
+        }));
+
+        // === SIGNALING HANDLER - FOR WEBRTC ===
+        AppCtx.BUS.on("signal", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Received signal from: " + ev.from +
+                    ", kind: " + (ev.data != null ? ev.data.path("kind").asText("") : "unknown"));
+
+            // Handle WebRTC signaling if needed
+            // For now, just log it
+        }));
+
         // Server-side events (from WebSocket)
         AppCtx.BUS.on("friend-request", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Received friend request from: " + ev.from);
             refreshPending();
             showNotification("Friend Request", "New friend request from " + ev.from);
         }));
 
         AppCtx.BUS.on("friend-accepted", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Friend request accepted by: " + ev.from);
             refreshFriends();
             refreshPending();
             showNotification("Friend Added", ev.from + " accepted your friend request");
@@ -137,6 +178,13 @@ public class MainController {
                 }
             }
             showNotification("User Blocked", "User " + ev.from + " has been blocked");
+        }));
+
+        // Profile updates
+        AppCtx.BUS.on("profile-updated", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Profile updated for: " + ev.from);
+            // Refresh friend list to show updated profiles
+            refreshFriends();
         }));
 
         // Client-side UI events (from context menus)
@@ -213,7 +261,6 @@ public class MainController {
         });
     }
 
-    // Fixed async friend management methods
     private void acceptFriendAsync(String username) {
         CompletableFuture.supplyAsync(() -> {
             return directory.acceptFriend(username);
@@ -311,10 +358,72 @@ public class MainController {
 
     public void setMe(UserProfile me) {
         Session.me = me;
+        Session.token = Config.APP_TOKEN; // Ensure session token is set
         renderMe();
 
+        // Initialize WebSocket connection
+        connectToInbox();
+    }
+
+    private void connectToInbox() {
+        if (Session.me == null || Config.APP_TOKEN == null || Config.APP_TOKEN.isEmpty()) {
+            System.err.println("[MainController] Cannot connect to inbox: missing user or token");
+            return;
+        }
+
         if (inbox == null) inbox = new InboxWs();
-        inbox.connect(Config.DIR_WORKER, me.getUsername(), Config.APP_TOKEN);
+
+        System.out.println("[MainController] Connecting to inbox for user: " + Session.me.getUsername());
+        System.out.println("[MainController] Using token: " +
+                Config.APP_TOKEN.substring(0, Math.min(20, Config.APP_TOKEN.length())) + "...");
+
+        inbox.connect(Config.DIR_WORKER, Session.me.getUsername(), Config.APP_TOKEN);
+    }
+
+    // Debug method for testing connection
+    @FXML
+    private void debugConnection() {
+        System.out.println("=== DEBUG CONNECTION STATUS ===");
+
+        // Import the debug class
+        try {
+            // Use reflection to avoid compile issues if debug class is missing
+            Class<?> debugClass = Class.forName("com.cottonlesergal.whisperclient.debug.DebugMessageTest");
+            var quickDebugMethod = debugClass.getMethod("quickDebug");
+            quickDebugMethod.invoke(null);
+
+            var testDirectMessageMethod = debugClass.getMethod("testDirectMessage");
+            testDirectMessageMethod.invoke(null);
+
+        } catch (Exception e) {
+            // Fallback to basic debug if the debug class doesn't exist
+            System.out.println("Session.me: " + (Session.me != null ? Session.me.getUsername() : "null"));
+            System.out.println("APP_TOKEN: " + (Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty() ?
+                    "exists (" + Config.APP_TOKEN.length() + " chars)" : "missing"));
+            System.out.println("Inbox: " + (inbox != null ? "created" : "null"));
+
+            if (inbox != null) {
+                System.out.println("WebSocket connected: " + inbox.isConnected());
+                System.out.println("Connection info: " + inbox.getConnectionInfo());
+            }
+
+            // Test the connection by trying to reconnect
+            if (Session.me != null && Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()) {
+                System.out.println("Attempting to reconnect...");
+                connectToInbox();
+
+                // Test sending a message to self
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        Thread.sleep(2000); // Wait for connection
+                        directory.sendChat(Session.me.getUsername(), "Debug test message: " + System.currentTimeMillis());
+                        System.out.println("Sent debug test message to self");
+                    } catch (Exception ex) {
+                        System.err.println("Failed to send debug message: " + ex.getMessage());
+                    }
+                });
+            }
+        }
     }
 
     private void renderMe() {
@@ -337,6 +446,7 @@ public class MainController {
         CompletableFuture.supplyAsync(() -> directory.friends())
                 .thenAccept(friends -> Platform.runLater(() -> {
                     listFriends.getItems().setAll(friends);
+                    System.out.println("[MainController] Refreshed friends list: " + friends.size() + " friends");
                 }));
     }
 
@@ -344,6 +454,7 @@ public class MainController {
         CompletableFuture.supplyAsync(() -> directory.pending())
                 .thenAccept(pending -> Platform.runLater(() -> {
                     listRequests.getItems().setAll(pending);
+                    System.out.println("[MainController] Refreshed pending requests: " + pending.size() + " requests");
                 }));
     }
 
@@ -450,6 +561,12 @@ public class MainController {
 
     private void performLogout() {
         try {
+            // Disconnect WebSocket
+            if (inbox != null) {
+                inbox.disconnect();
+                inbox = null;
+            }
+
             // Clear credentials to disable auto sign-in
             credentialsStorage.clearCredentials();
 
@@ -457,12 +574,6 @@ public class MainController {
             Session.me = null;
             Session.token = null;
             Config.APP_TOKEN = "";
-
-            // Disconnect inbox WebSocket
-            if (inbox != null) {
-                // Note: You might need to add a disconnect method to InboxWs
-                inbox = null;
-            }
 
             // Clear UI state
             clearChat();

@@ -58,6 +58,8 @@ public class ChatController {
         setupScrollPane();
         setupLoadingIndicator();
         setupContextMenus();
+
+        System.out.println("[ChatController] Initialized");
     }
 
     private void setupContextMenus() {
@@ -144,6 +146,7 @@ public class ChatController {
     }
 
     public void bindFriend(Friend f) {
+        System.out.println("[ChatController] Binding friend: " + f.getUsername());
         this.friend = f;
 
         // Clear previous messages
@@ -151,13 +154,13 @@ public class ChatController {
         currentPage.set(0);
         hasMoreMessages.set(true);
 
-        // Remove old chat subscription since messages are now handled globally in MainController
+        // Remove old chat subscription
         if (subChat != null) {
             try { subChat.close(); } catch (Exception ignored) {}
         }
 
         // Subscribe to profile updates for this friend
-        AutoCloseable profileSub = AppCtx.BUS.on("profile-updated", ev -> {
+        subChat = AppCtx.BUS.on("profile-updated", ev -> {
             if (ev.from != null && friend.getUsername().equalsIgnoreCase(ev.from)) {
                 Platform.runLater(() -> {
                     if (ev.data != null) {
@@ -231,6 +234,8 @@ public class ChatController {
     }
 
     private void loadInitialMessages() {
+        System.out.println("[ChatController] Loading initial messages for: " + friend.getUsername());
+
         currentPage.set(0);
         hasMoreMessages.set(true);
 
@@ -243,9 +248,11 @@ public class ChatController {
             addDMHeader();
 
             if (messages.isEmpty()) {
+                System.out.println("[ChatController] No messages found, showing welcome message");
                 // Show welcome message if no history
                 addWelcomeMessage();
             } else {
+                System.out.println("[ChatController] Loaded " + messages.size() + " messages");
                 // Add messages in chronological order (oldest first)
                 // Since storage returns newest first, we reverse the order
                 for (int i = messages.size() - 1; i >= 0; i--) {
@@ -257,7 +264,16 @@ public class ChatController {
             }
 
             scrollToBottom();
-        }));
+        })).exceptionally(throwable -> {
+            System.err.println("[ChatController] Error loading initial messages: " + throwable.getMessage());
+            throwable.printStackTrace();
+            Platform.runLater(() -> {
+                messagesBox.getChildren().clear();
+                addDMHeader();
+                addWelcomeMessage();
+            });
+            return null;
+        });
     }
 
     private void loadMoreMessages() {
@@ -331,6 +347,8 @@ public class ChatController {
     public void onSend() {
         String text = txtMessage.getText();
         if (text == null || text.isBlank() || friend == null) return;
+
+        System.out.println("[ChatController] Sending message to: " + friend.getUsername() + " - " + text);
 
         // Send via network
         directory.sendChat(friend.getUsername(), text);
@@ -549,6 +567,8 @@ public class ChatController {
 
     // Public methods for MainController to call
     public void addMessageBubble(ChatMessage message) {
+        System.out.println("[ChatController] Adding message bubble from: " + message.getFrom() +
+                " (isFromMe: " + message.isFromMe() + ")");
         Node bubble = createMessageBubble(message);
         messagesBox.getChildren().add(bubble);
     }
@@ -575,8 +595,10 @@ public class ChatController {
     public void appendLocal(String text) {
         // This method is kept for compatibility but now we handle storage in onSend
         // Just add to UI since storage is handled elsewhere
-        ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
-        addMessageBubble(outgoing);
-        scrollToBottom();
+        if (friend != null) {
+            ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
+            addMessageBubble(outgoing);
+            scrollToBottom();
+        }
     }
 }
