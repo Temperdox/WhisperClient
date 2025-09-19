@@ -44,7 +44,7 @@ public class HttpMediaClientService {
      */
     public void sendMedia(File file, String to, String caption) throws Exception {
         if (!file.exists()) {
-            throw new RuntimeException("File does not exist");
+            throw new RuntimeException("File does not exist: " + file.getAbsolutePath());
         }
 
         if (file.length() > MAX_FILE_SIZE) {
@@ -54,52 +54,73 @@ public class HttpMediaClientService {
         System.out.println("[HttpMediaClientService] Sending media file: " + file.getName() +
                 " (" + formatFileSize(file.length()) + ") to " + to);
 
-        // Read file and encode
-        byte[] fileBytes = Files.readAllBytes(file.toPath());
-        String base64Data = Base64.getEncoder().encodeToString(fileBytes);
+        try {
+            // Read file and encode
+            byte[] fileBytes = Files.readAllBytes(file.toPath());
+            String base64Data = Base64.getEncoder().encodeToString(fileBytes);
 
-        // Determine MIME type
-        String mimeType = Files.probeContentType(file.toPath());
-        if (mimeType == null) {
-            mimeType = guessMimeType(file.getName());
-        }
-
-        // Create upload payload
-        var payload = MAPPER.createObjectNode()
-                .put("to", to)
-                .put("fileName", file.getName())
-                .put("mimeType", mimeType)
-                .put("size", file.length())
-                .put("data", base64Data);
-
-        if (caption != null && !caption.trim().isEmpty()) {
-            payload.put("caption", caption.trim());
-        }
-
-        // Send via HTTP POST
-        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/send-media"))
-                .header("authorization", "Bearer " + Config.APP_TOKEN)
-                .header("content-type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
-                .build();
-
-        HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() != 200) {
-            String errorBody = response.body();
-            System.err.println("[HttpMediaClientService] Failed to send media. Status: " + response.statusCode() +
-                    ", Body: " + errorBody);
-
-            if (response.statusCode() == 403) {
-                throw new RuntimeException("Not friends with " + to + " - cannot send media");
-            } else if (response.statusCode() == 413) {
-                throw new RuntimeException("File too large for server");
-            } else {
-                throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
+            // Determine MIME type
+            String mimeType = Files.probeContentType(file.toPath());
+            if (mimeType == null) {
+                mimeType = guessMimeType(file.getName());
             }
-        }
 
-        System.out.println("[HttpMediaClientService] Successfully sent media to " + to);
+            System.out.println("[HttpMediaClientService] File read successfully, MIME type: " + mimeType +
+                    ", Base64 length: " + base64Data.length());
+
+            // Create upload payload
+            var payload = MAPPER.createObjectNode()
+                    .put("to", to)
+                    .put("fileName", file.getName())
+                    .put("mimeType", mimeType)
+                    .put("size", file.length())
+                    .put("data", base64Data);
+
+            if (caption != null && !caption.trim().isEmpty()) {
+                payload.put("caption", caption.trim());
+            }
+
+            String jsonPayload = payload.toString();
+            System.out.println("[HttpMediaClientService] Created JSON payload, size: " + formatFileSize(jsonPayload.length()));
+
+            // Send via HTTP POST
+            String endpoint = Config.DIR_WORKER + "/send-media";
+            System.out.println("[HttpMediaClientService] Sending to endpoint: " + endpoint);
+
+            HttpRequest req = HttpRequest.newBuilder(URI.create(endpoint))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("content-type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                    .build();
+
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[HttpMediaClientService] HTTP Response: " + response.statusCode());
+            System.out.println("[HttpMediaClientService] Response body: " + response.body());
+
+            if (response.statusCode() != 200) {
+                String errorBody = response.body();
+                System.err.println("[HttpMediaClientService] Failed to send media. Status: " + response.statusCode() +
+                        ", Body: " + errorBody);
+
+                if (response.statusCode() == 403) {
+                    throw new RuntimeException("Not friends with " + to + " - cannot send media");
+                } else if (response.statusCode() == 413) {
+                    throw new RuntimeException("File too large for server");
+                } else if (response.statusCode() == 404) {
+                    throw new RuntimeException("Media endpoint not found - check worker deployment");
+                } else {
+                    throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
+                }
+            }
+
+            System.out.println("[HttpMediaClientService] Successfully sent media to " + to);
+
+        } catch (Exception e) {
+            System.err.println("[HttpMediaClientService] Exception during media send: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Failed to send media: " + e.getMessage(), e);
+        }
     }
 
     private String guessMimeType(String fileName) {
