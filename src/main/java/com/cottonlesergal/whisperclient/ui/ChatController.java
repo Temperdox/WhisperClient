@@ -53,7 +53,7 @@ public class ChatController {
     private final SimpleMediaService mediaService = SimpleMediaService.getInstance();
     private final MediaPreviewService previewService = MediaPreviewService.getInstance();
     private final NotificationManager notificationManager = NotificationManager.getInstance();
-    private final MessageChunkingService chunkingService = MessageChunkingService.getInstance();
+    private final HttpMediaClientService httpMediaService = HttpMediaClientService.getInstance();
 
     private Friend friend;
 
@@ -473,45 +473,21 @@ public class ChatController {
     private void sendMediaFile(MediaPreview preview, String caption) {
         if (friend == null) return;
 
-        previewService.showProgress(preview, "Processing...");
+        previewService.showProgress(preview, "Preparing...");
 
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                // Process the media file
-                SimpleMediaMessage mediaMessage = mediaService.processFile(preview.getFile());
-
-                if (caption != null && !caption.trim().isEmpty()) {
-                    mediaMessage.setCaption(caption.trim());
-                }
-
-                String mediaText = mediaService.createMediaMessageText(mediaMessage);
-
-                // Store the message
-                ChatMessage outgoingMessage = ChatMessage.fromOutgoing(friend.getUsername(), mediaText);
-                storage.storeMessage(friend.getUsername(), outgoingMessage);
-
-                return new MediaResult(mediaMessage, outgoingMessage, mediaText);
-
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to process media: " + e.getMessage(), e);
-            }
-        }).thenAccept(result -> {
-            Platform.runLater(() -> {
-                previewService.updateProgress(preview, "Sending...");
-
-                // Display in UI
-                addMessageBubble(result.chatMessage);
-                scrollToBottom();
-            });
-
-            // Send the media message (with chunking support)
-            new Thread(() -> {
-                try {
-                    directory.sendChat(friend.getUsername(), result.mediaText);
-                    System.out.println("[ChatController] Media message sent successfully");
+        // Use HTTP POST instead of WebSocket chunking
+        httpMediaService.sendMediaAsync(preview.getFile(), friend.getUsername(), caption)
+                .thenRun(() -> {
+                    System.out.println("[ChatController] Media sent successfully via HTTP");
 
                     Platform.runLater(() -> {
                         previewService.updateProgress(preview, "Sent ✓");
+
+                        // Create a simple message bubble showing media was sent
+                        ChatMessage mediaMessage = ChatMessage.fromOutgoing(friend.getUsername(),
+                                "📎 Sent: " + preview.getFileName() + " (" + formatFileSize(preview.getFileSize()) + ")");
+                        addMessageBubble(mediaMessage);
+                        scrollToBottom();
 
                         // Remove preview after successful send (with delay)
                         new Thread(() -> {
@@ -528,26 +504,16 @@ public class ChatController {
                             }
                         }).start();
                     });
-
-                } catch (Exception e) {
-                    System.err.println("[ChatController] Failed to send media: " + e.getMessage());
-                    e.printStackTrace();
+                })
+                .exceptionally(throwable -> {
+                    System.err.println("[ChatController] Failed to send media via HTTP: " + throwable.getMessage());
                     Platform.runLater(() -> {
                         previewService.hideProgress(preview);
-                        showError("Send Failed", "Could not send " + preview.getFileName() + ": " + e.getMessage());
+                        showError("Send Failed", "Could not send " + preview.getFileName() + ": " + throwable.getMessage());
                         // Keep preview visible on failure so user can retry
                     });
-                }
-            }).start();
-
-        }).exceptionally(throwable -> {
-            Platform.runLater(() -> {
-                previewService.hideProgress(preview);
-                showError("Processing Failed", "Failed to process " + preview.getFileName() + ": " + throwable.getMessage());
-                // Keep preview visible on failure so user can retry
-            });
-            return null;
-        });
+                    return null;
+                });
     }
 
     // Helper class for media processing results
@@ -857,10 +823,15 @@ public class ChatController {
     }
 
     /**
-     * Enhanced createMessageBubble method with deletion support
+     * Enhanced createMessageBubble method with deletion support and direct media handling
      */
     private Node createMessageBubbleWithDeletion(ChatMessage message) {
         boolean isFromMe = message.isFromMe();
+
+        // Check for direct media messages
+        if (message.getContent().startsWith("[DIRECT_MEDIA:")) {
+            return createDirectMediaBubble(message, isFromMe);
+        }
 
         if (mediaService.isMediaMessage(message.getContent())) {
             SimpleMediaService.SimpleMediaMessage mediaMessage = mediaService.extractMediaMessage(message.getContent());
@@ -896,6 +867,164 @@ public class ChatController {
 
         container.getChildren().add(textLabel);
         return container;
+    }
+
+    /**
+     * Create message bubble for direct media (HTTP POST sent)
+     */
+    private Node createDirectMediaBubble(ChatMessage message, boolean isFromMe) {
+        VBox container = createMessageContainerWithDeletion(isFromMe, message);
+
+        try {
+            // Parse direct media format: [DIRECT_MEDIA:id:fileName:mimeType:size:base64Data]caption
+            String content = message.getContent();
+            int endBracket = content.indexOf(']');
+            String mediaInfo = content.substring(13, endBracket); // Remove [DIRECT_MEDIA:
+            String caption = endBracket + 1 < content.length() ? content.substring(endBracket + 1) : "";
+
+            String[] parts = mediaInfo.split(":", 5);
+            if (parts.length >= 5) {
+                String messageId = parts[0];
+                String fileName = parts[1];
+                String mimeType = parts[2];
+                long size = Long.parseLong(parts[3]);
+                String base64Data = parts[4];
+
+                // Create media display
+                if (mimeType.startsWith("image/")) {
+                    displayDirectImage(container, fileName, mimeType, size, base64Data, caption);
+                } else {
+                    displayDirectFile(container, fileName, mimeType, size, caption);
+                }
+            }
+
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to parse direct media: " + e.getMessage());
+            Label errorLabel = new Label("Failed to load media: " + e.getMessage());
+            errorLabel.setStyle("-fx-text-fill: #f04747;");
+            container.getChildren().add(errorLabel);
+        }
+
+        return container;
+    }
+
+    private void displayDirectImage(VBox container, String fileName, String mimeType,
+                                    long size, String base64Data, String caption) {
+        try {
+            // Decode and display image
+            byte[] imageBytes = Base64.getDecoder().decode(base64Data);
+            Image image = new Image(new ByteArrayInputStream(imageBytes));
+
+            ImageView imageView = new ImageView(image);
+            imageView.setPreserveRatio(true);
+            imageView.setFitWidth(Math.min(400, image.getWidth()));
+            imageView.setFitHeight(Math.min(300, image.getHeight()));
+
+            // Make image clickable for fullscreen view
+            imageView.setOnMouseClicked(e -> openImageFullscreen(image));
+            imageView.setStyle("-fx-cursor: hand;");
+
+            container.getChildren().add(imageView);
+
+            // Add file info
+            Label fileInfo = new Label(fileName + " (" + formatFileSize(size) + ")");
+            fileInfo.setStyle("-fx-text-fill: #72767d; -fx-font-size: 11px;");
+            container.getChildren().add(fileInfo);
+
+            // Add save button
+            Button saveButton = new Button("Save Image");
+            saveButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;");
+            saveButton.setOnAction(e -> saveImageToFile(imageBytes, fileName));
+            container.getChildren().add(saveButton);
+
+            // Add caption if present
+            if (!caption.trim().isEmpty()) {
+                Label captionLabel = new Label(caption.trim());
+                captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
+                captionLabel.setWrapText(true);
+                container.getChildren().add(captionLabel);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to display direct image: " + e.getMessage());
+            Label errorLabel = new Label("Failed to load image: " + fileName);
+            errorLabel.setStyle("-fx-text-fill: #f04747;");
+            container.getChildren().add(errorLabel);
+        }
+    }
+
+    private void displayDirectFile(VBox container, String fileName, String mimeType,
+                                   long size, String caption) {
+        // File icon and info
+        HBox fileDisplay = new HBox(12);
+        fileDisplay.setAlignment(Pos.CENTER_LEFT);
+
+        Label fileIcon = new Label();
+        fileIcon.setStyle("-fx-font-size: 32px;");
+
+        if (mimeType.startsWith("video/")) {
+            fileIcon.setText("🎥");
+        } else if (mimeType.startsWith("audio/")) {
+            fileIcon.setText("🎵");
+        } else {
+            fileIcon.setText("📎");
+        }
+
+        VBox fileInfo = new VBox(2);
+
+        Label fileNameLabel = new Label(fileName);
+        fileNameLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-font-weight: 600;");
+
+        Label fileSizeLabel = new Label(formatFileSize(size));
+        fileSizeLabel.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
+
+        fileInfo.getChildren().addAll(fileNameLabel, fileSizeLabel);
+        fileDisplay.getChildren().addAll(fileIcon, fileInfo);
+
+        container.getChildren().add(fileDisplay);
+
+        // Add caption if present
+        if (!caption.trim().isEmpty()) {
+            Label captionLabel = new Label(caption.trim());
+            captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
+            captionLabel.setWrapText(true);
+            container.getChildren().add(captionLabel);
+        }
+    }
+
+    private void saveImageToFile(byte[] imageBytes, String originalFileName) {
+        javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+        fileChooser.setTitle("Save Image");
+        fileChooser.setInitialFileName(originalFileName);
+
+        // Set to Pictures directory
+        String userHome = System.getProperty("user.home");
+        if (userHome != null) {
+            File picturesDir = new File(userHome, "Pictures");
+            if (picturesDir.exists()) {
+                fileChooser.setInitialDirectory(picturesDir);
+            }
+        }
+
+        Stage stage = (Stage) messagesBox.getScene().getWindow();
+        File saveFile = fileChooser.showSaveDialog(stage);
+
+        if (saveFile != null) {
+            try {
+                Files.write(saveFile.toPath(), imageBytes);
+                System.out.println("[ChatController] Saved image to: " + saveFile.getAbsolutePath());
+                showInfo("Image Saved", "Image saved to " + saveFile.getName());
+            } catch (Exception e) {
+                System.err.println("[ChatController] Failed to save image: " + e.getMessage());
+                showError("Save Failed", "Could not save image: " + e.getMessage());
+            }
+        }
+    }
+
+    private void showInfo(String title, String message) {
+        if (notificationManager != null) {
+            notificationManager.showSuccessNotification(title, message);
+        }
     }
 
     private void addTextMessageBubble(String text, boolean isFromMe) {

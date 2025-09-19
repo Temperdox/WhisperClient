@@ -164,6 +164,8 @@ public class InboxWs implements WebSocket.Listener {
 
             if ("chat".equals(type)) {
                 handleChatMessage(messageNode, from, to, timestamp);
+            } else if ("media-direct".equals(type)) {
+                handleDirectMediaMessage(messageNode, from, to, timestamp);
             } else {
                 // Handle other message types (signal, etc.)
                 handleOtherMessage(messageNode, type, from, to, timestamp);
@@ -173,6 +175,76 @@ public class InboxWs implements WebSocket.Listener {
             System.err.println("[InboxWs] Error parsing complete message: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Handle direct media messages sent via HTTP POST
+     */
+    private void handleDirectMediaMessage(JsonNode messageNode, String from, String to, long timestamp) {
+        try {
+            JsonNode data = messageNode.path("data");
+            String fileName = data.path("fileName").asText();
+            String mimeType = data.path("mimeType").asText();
+            long size = data.path("size").asLong();
+            String mediaData = data.path("data").asText();
+            String caption = data.path("caption").asText("");
+            String messageId = data.path("id").asText();
+
+            System.out.println("[InboxWs] Received direct media from " + from +
+                    ": " + fileName + " (" + formatFileSize(size) + ")");
+
+            // Apply rate limiting
+            if (!rateLimiter.allowMessage(from)) {
+                System.out.println("[InboxWs] Media message from " + from + " was rate limited");
+                return;
+            }
+
+            // Create media message text for storage
+            String mediaMessageText = String.format("[DIRECT_MEDIA:%s:%s:%s:%d:%s]%s",
+                    messageId, fileName, mimeType, size, mediaData,
+                    caption.isEmpty() ? "" : "\n" + caption);
+
+            // Create and store the message
+            ChatMessage chatMessage = new ChatMessage(
+                    messageId, from, to, mediaMessageText, "media", false
+            );
+            chatMessage.setTimestamp(timestamp);
+
+            // Store the message
+            messageStorage.storeMessage(from, chatMessage);
+
+            // Notify UI on JavaFX thread
+            Platform.runLater(() -> {
+                try {
+                    // Update notification count
+                    notificationManager.incrementNotificationCount(from);
+
+                    // Show notification
+                    notificationManager.showToast("Media from " + from,
+                            "📎 " + fileName + " (" + formatFileSize(size) + ")",
+                            NotificationManager.ToastType.MESSAGE);
+
+                    // Emit event to the event bus for any UI components that need it
+                    Event mediaEvent = new Event("media-direct", from, to, timestamp, data);
+                    AppCtx.BUS.emit(mediaEvent);
+
+                } catch (Exception e) {
+                    System.err.println("[InboxWs] Error updating UI for media: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            });
+
+        } catch (Exception e) {
+            System.err.println("[InboxWs] Error handling direct media message: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     /**
