@@ -50,7 +50,6 @@ public class ChatController {
 
     private final DirectoryClient directory = new DirectoryClient();
     private final MessageStorageService storage = MessageStorageService.getInstance();
-    private final SimpleMediaService mediaService = SimpleMediaService.getInstance();
     private final MediaPreviewService previewService = MediaPreviewService.getInstance();
     private final NotificationManager notificationManager = NotificationManager.getInstance();
     private final HttpMediaClientService httpMediaService = HttpMediaClientService.getInstance();
@@ -617,102 +616,24 @@ public class ChatController {
     private void processStoredMessage(ChatMessage message) {
         String content = message.getContent();
 
-        if (mediaService.isMediaMessage(content)) {
-            SimpleMediaMessage mediaMessage = mediaService.extractMediaMessage(content);
-            if (mediaMessage != null) {
-                displayMediaMessage(mediaMessage, message.isFromMe());
-            } else {
-                addTextMessageBubble(content, message.isFromMe());
-            }
+        // Check for direct media messages first
+        if (content.startsWith("[DIRECT_MEDIA:")) {
+            Node mediaNode = createDirectMediaBubble(message, message.isFromMe());
+            messagesBox.getChildren().add(mediaNode);
         } else {
+            // Regular text message
             addTextMessageBubble(content, message.isFromMe());
         }
     }
 
-    private void displayMediaMessage(SimpleMediaMessage mediaMessage, boolean isFromMe) {
-        VBox messageContainer = createMessageContainerWithDeletion(isFromMe, null);
+    // Remove these old methods - they're not needed with HTTP media sending:
+    // - displayMediaMessage()
+    // - displayImageMessage()
+    // - displayVideoMessage()
+    // - displayAudioMessage()
+    // - displayFileMessage()
 
-        switch (mediaMessage.getType()) {
-            case "image":
-                displayImageMessage(messageContainer, mediaMessage);
-                break;
-            case "video":
-                displayVideoMessage(messageContainer, mediaMessage);
-                break;
-            case "audio":
-                displayAudioMessage(messageContainer, mediaMessage);
-                break;
-            default:
-                displayFileMessage(messageContainer, mediaMessage);
-                break;
-        }
-
-        messagesBox.getChildren().add(messageContainer);
-    }
-
-    private void displayImageMessage(VBox container, SimpleMediaMessage mediaMessage) {
-        try {
-            byte[] imageData = Base64.getDecoder().decode(mediaMessage.getData());
-            Image image = new Image(new ByteArrayInputStream(imageData));
-
-            ImageView imageView = new ImageView(image);
-            imageView.setPreserveRatio(true);
-            imageView.setFitWidth(Math.min(400, image.getWidth()));
-            imageView.setFitHeight(Math.min(300, image.getHeight()));
-
-            // Make image clickable for fullscreen view
-            imageView.setOnMouseClicked(e -> openImageFullscreen(image));
-            imageView.setStyle("-fx-cursor: hand;");
-
-            container.getChildren().add(imageView);
-
-            // Add caption if present
-            if (mediaMessage.getCaption() != null && !mediaMessage.getCaption().trim().isEmpty()) {
-                Label caption = new Label(mediaMessage.getCaption());
-                caption.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-                caption.setWrapText(true);
-                container.getChildren().add(caption);
-            }
-
-        } catch (Exception e) {
-            System.err.println("[ChatController] Failed to display image: " + e.getMessage());
-            Label errorLabel = new Label("Failed to load image: " + mediaMessage.getFileName());
-            errorLabel.setStyle("-fx-text-fill: #f04747;");
-            container.getChildren().add(errorLabel);
-        }
-    }
-
-    private void displayVideoMessage(VBox container, SimpleMediaMessage mediaMessage) {
-        // Placeholder for video display - could use MediaView in the future
-        Label videoLabel = new Label("🎥 " + mediaMessage.getFileName());
-        videoLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-
-        Label sizeLabel = new Label(formatFileSize(mediaMessage.getSize()));
-        sizeLabel.setStyle("-fx-text-fill: #72767d; -fx-font-size: 12px;");
-
-        container.getChildren().addAll(videoLabel, sizeLabel);
-    }
-
-    private void displayAudioMessage(VBox container, SimpleMediaMessage mediaMessage) {
-        // Placeholder for audio display
-        Label audioLabel = new Label("🎵 " + mediaMessage.getFileName());
-        audioLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-
-        Label sizeLabel = new Label(formatFileSize(mediaMessage.getSize()));
-        sizeLabel.setStyle("-fx-text-fill: #72767d; -fx-font-size: 12px;");
-
-        container.getChildren().addAll(audioLabel, sizeLabel);
-    }
-
-    private void displayFileMessage(VBox container, SimpleMediaMessage mediaMessage) {
-        Label fileLabel = new Label("📎 " + mediaMessage.getFileName());
-        fileLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-
-        Label sizeLabel = new Label(formatFileSize(mediaMessage.getSize()));
-        sizeLabel.setStyle("-fx-text-fill: #72767d; -fx-font-size: 12px;");
-
-        container.getChildren().addAll(fileLabel, sizeLabel);
-    }
+    // The HTTP media system uses createDirectMediaBubble() instead
 
     private void openImageFullscreen(Image image) {
         Stage imageStage = new Stage();
@@ -823,40 +744,17 @@ public class ChatController {
     }
 
     /**
-     * Enhanced createMessageBubble method with deletion support and direct media handling
+     * Enhanced createMessageBubble method with deletion support and HTTP media handling
      */
     private Node createMessageBubbleWithDeletion(ChatMessage message) {
         boolean isFromMe = message.isFromMe();
 
-        // Check for direct media messages
+        // Check for direct media messages (HTTP sent)
         if (message.getContent().startsWith("[DIRECT_MEDIA:")) {
             return createDirectMediaBubble(message, isFromMe);
         }
 
-        if (mediaService.isMediaMessage(message.getContent())) {
-            SimpleMediaService.SimpleMediaMessage mediaMessage = mediaService.extractMediaMessage(message.getContent());
-            if (mediaMessage != null) {
-                VBox container = createMessageContainerWithDeletion(isFromMe, message);
-
-                switch (mediaMessage.getType()) {
-                    case "image":
-                        displayImageMessage(container, mediaMessage);
-                        break;
-                    case "video":
-                        displayVideoMessage(container, mediaMessage);
-                        break;
-                    case "audio":
-                        displayAudioMessage(container, mediaMessage);
-                        break;
-                    default:
-                        displayFileMessage(container, mediaMessage);
-                        break;
-                }
-
-                return container;
-            }
-        }
-
+        // All other messages are text
         VBox container = createMessageContainerWithDeletion(isFromMe, message);
 
         Label textLabel = new Label(message.getContent());

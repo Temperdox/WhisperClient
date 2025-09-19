@@ -112,15 +112,15 @@ public class InboxWs implements WebSocket.Listener {
                 return null;
             }
 
-            // Process message through chunking service
-            String completeMessage = chunkingService.processReceivedMessage(rawMessage);
-
-            // If null, we're still waiting for more chunks
-            if (completeMessage == null) {
-                System.out.println("[InboxWs] Received chunk, waiting for more...");
+            // SKIP chunked messages entirely - we only handle HTTP media now
+            if (rawMessage.startsWith("[CHUNK:")) {
+                System.out.println("[InboxWs] Skipping old chunked message - use HTTP media instead");
                 webSocket.request(1);
                 return null;
             }
+
+            // Only process direct JSON messages (no chunking)
+            String completeMessage = rawMessage;
 
             // Log complete message length
             System.out.println("[InboxWs] Processing complete message (length: " + completeMessage.length() + ")");
