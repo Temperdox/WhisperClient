@@ -41,6 +41,19 @@ Label.window-icon:hover {
     -fx-text-fill: #ffffff !important;
 }
 
+Label.close-icon {
+    -fx-text-fill: #96989d !important;
+    -fx-font-size: 14px !important;
+    -fx-font-weight: normal !important;
+    -fx-alignment: CENTER !important;
+    -fx-cursor: hand !important;
+    -fx-background-color: transparent !important;
+    -fx-border-color: transparent !important;
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-text-alignment: CENTER !important;
+}
+
 Label.close-icon:hover {
     -fx-background-color: #f23f43 !important;
     -fx-text-fill: #ffffff !important;

@@ -22,6 +22,9 @@ import javafx.scene.layout.*;
 import javafx.scene.shape.Circle;
 import javafx.util.Duration;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -54,6 +57,27 @@ public class ChatController {
     private void initialize() {
         setupScrollPane();
         setupLoadingIndicator();
+        setupContextMenus();
+    }
+
+    private void setupContextMenus() {
+        // Context menu for empty chat area
+        ContextMenu chatAreaMenu = new ContextMenu();
+
+        MenuItem clearHistory = new MenuItem("Clear Message History");
+        clearHistory.setOnAction(e -> clearMessageHistory());
+
+        MenuItem deleteLocalData = new MenuItem("Delete All Local Messages");
+        deleteLocalData.setOnAction(e -> deleteAllLocalMessages());
+
+        chatAreaMenu.getItems().addAll(clearHistory, new SeparatorMenuItem(), deleteLocalData);
+
+        // Set context menu on messages container
+        messagesBox.setOnContextMenuRequested(event -> {
+            // Only show if not clicking on a message
+            chatAreaMenu.show(messagesBox, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
     }
 
     private void setupScrollPane() {
@@ -127,27 +151,10 @@ public class ChatController {
         currentPage.set(0);
         hasMoreMessages.set(true);
 
-        // Re-subscribe for this friend's chat events
+        // Remove old chat subscription since messages are now handled globally in MainController
         if (subChat != null) {
             try { subChat.close(); } catch (Exception ignored) {}
         }
-
-        subChat = AppCtx.BUS.on("chat", ev -> {
-            if (ev.from != null && friend.getUsername().equalsIgnoreCase(ev.from)) {
-                String text = ev.data != null && ev.data.has("text") ? ev.data.get("text").asText("") : "";
-                Platform.runLater(() -> {
-                    // Store incoming message
-                    ChatMessage incoming = ChatMessage.fromIncoming(ev.from, text);
-                    storage.storeMessage(friend.getUsername(), incoming);
-
-                    // Only add to UI if we're currently viewing this chat
-                    if (friend != null && friend.getUsername().equalsIgnoreCase(ev.from)) {
-                        addMessageBubble(incoming);
-                        scrollToBottom();
-                    }
-                });
-            }
-        });
 
         // Subscribe to profile updates for this friend
         AutoCloseable profileSub = AppCtx.BUS.on("profile-updated", ev -> {
@@ -339,11 +346,6 @@ public class ChatController {
         txtMessage.clear();
     }
 
-    private void addMessageBubble(ChatMessage message) {
-        Node bubble = createMessageBubble(message);
-        messagesBox.getChildren().add(bubble);
-    }
-
     private Node createMessageBubble(ChatMessage message) {
         HBox messageRow = new HBox(12);
         messageRow.getStyleClass().add("message-row");
@@ -405,7 +407,156 @@ public class ChatController {
 
         messageRow.getChildren().addAll(avatar, contentArea);
 
+        // Add context menu for my messages only
+        if (message.isFromMe()) {
+            ContextMenu messageMenu = new ContextMenu();
+
+            MenuItem copyMessage = new MenuItem("Copy Message");
+            copyMessage.setOnAction(e -> {
+                final javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                final javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                content.putString(message.getContent());
+                clipboard.setContent(content);
+                showNotification("Copied", "Message copied to clipboard");
+            });
+
+            MenuItem editMessage = new MenuItem("Edit Message");
+            editMessage.setOnAction(e -> editMessage(message, contentLabel));
+
+            MenuItem deleteMessage = new MenuItem("Delete Message");
+            deleteMessage.setOnAction(e -> deleteMessage(message, messageRow));
+
+            messageMenu.getItems().addAll(copyMessage, editMessage, new SeparatorMenuItem(), deleteMessage);
+
+            messageRow.setOnContextMenuRequested(event -> {
+                messageMenu.show(messageRow, event.getScreenX(), event.getScreenY());
+                event.consume();
+            });
+        }
+
         return messageRow;
+    }
+
+    private void editMessage(ChatMessage message, Label contentLabel) {
+        TextInputDialog dialog = new TextInputDialog(message.getContent());
+        dialog.setTitle("Edit Message");
+        dialog.setHeaderText("Edit your message");
+        dialog.setContentText("Message:");
+
+        dialog.showAndWait().ifPresent(newContent -> {
+            if (!newContent.trim().isEmpty() && !newContent.equals(message.getContent())) {
+                // Update the message content
+                message.setContent(newContent);
+                contentLabel.setText(newContent);
+
+                // Update in storage
+                storage.storeMessage(friend.getUsername(), message);
+
+                // TODO: Send edit event to other user via network
+                showNotification("Message Edited", "Message has been updated");
+            }
+        });
+    }
+
+    private void deleteMessage(ChatMessage message, Node messageNode) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                "Are you sure you want to delete this message?",
+                ButtonType.YES, ButtonType.NO);
+        confirm.setTitle("Delete Message");
+        confirm.setHeaderText("Delete Message");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.YES) {
+                // Remove from UI
+                messagesBox.getChildren().remove(messageNode);
+
+                // TODO: Remove from storage (would need to track file names)
+                // TODO: Send delete event to other user via network
+                showNotification("Message Deleted", "Message has been removed");
+            }
+        });
+    }
+
+    private void clearMessageHistory() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                "Clear message history with " + (friend != null ? friend.getDisplayName() : "this user") + "?\n\n" +
+                        "This will only clear the messages from your view. The other person will still see them.",
+                ButtonType.YES, ButtonType.NO);
+        confirm.setTitle("Clear Message History");
+        confirm.setHeaderText("Clear Messages");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.YES) {
+                // Clear UI
+                messagesBox.getChildren().clear();
+                addDMHeader();
+
+                // TODO: Clear from local storage for this user
+                showNotification("History Cleared", "Message history has been cleared");
+            }
+        });
+    }
+
+    private void deleteAllLocalMessages() {
+        Alert confirm = new Alert(Alert.AlertType.WARNING,
+                "Delete ALL message history for ALL conversations?\n\n" +
+                        "This will permanently delete all your stored messages and cannot be undone.",
+                ButtonType.YES, ButtonType.NO);
+        confirm.setTitle("Delete All Messages");
+        confirm.setHeaderText("WARNING: Permanent Deletion");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.YES) {
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        Path messagesDir = Paths.get(System.getProperty("user.home"), ".whisperclient", "messages");
+                        if (Files.exists(messagesDir)) {
+                            // Delete entire messages directory
+                            Files.walk(messagesDir)
+                                    .sorted(java.util.Comparator.reverseOrder())
+                                    .map(Path::toFile)
+                                    .forEach(java.io.File::delete);
+                        }
+                        Platform.runLater(() -> {
+                            // Clear current chat UI
+                            messagesBox.getChildren().clear();
+                            if (friend != null) addDMHeader();
+                            showNotification("All Messages Deleted", "All local message history has been permanently deleted");
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(() -> {
+                            showError("Deletion Failed", "Could not delete message history: " + e.getMessage());
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    private void showNotification(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, message);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.showAndWait();
+    }
+
+    private void showError(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.ERROR, message);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.showAndWait();
+    }
+
+    // Public methods for MainController to call
+    public void addMessageBubble(ChatMessage message) {
+        Node bubble = createMessageBubble(message);
+        messagesBox.getChildren().add(bubble);
+    }
+
+    public void scrollToBottom() {
+        Platform.runLater(() -> {
+            scrollPane.setVvalue(1.0);
+        });
     }
 
     private void addWelcomeMessage() {
@@ -419,12 +570,6 @@ public class ChatController {
     private void addDMHeader() {
         Node header = createDMHeader();
         messagesBox.getChildren().add(header);
-    }
-
-    private void scrollToBottom() {
-        Platform.runLater(() -> {
-            scrollPane.setVvalue(1.0);
-        });
     }
 
     public void appendLocal(String text) {
