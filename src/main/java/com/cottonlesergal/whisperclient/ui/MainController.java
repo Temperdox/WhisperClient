@@ -119,6 +119,50 @@ public class MainController {
     }
 
     private void setupEventHandlers() {
+        // === MEDIA HANDLER - FOR HTTP MEDIA MESSAGES ===
+        AppCtx.BUS.on("media-direct", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Received media notification from: " + ev.from);
+
+            if (ev.data != null) {
+                String fileName = ev.data.path("fileName").asText("");
+                String mediaId = ev.data.path("mediaId").asText("");
+                long size = ev.data.path("size").asLong(0);
+
+                System.out.println("[MainController] Media details: " + fileName +
+                        " (" + formatFileSize(size) + "), ID: " + mediaId);
+
+                // Create media URL message format for storage and display
+                String downloadUrl = ev.data.path("downloadUrl").asText("");
+                String caption = ev.data.path("caption").asText("");
+                String messageId = ev.data.path("id").asText("");
+
+                String mediaUrlMessage = String.format("[MEDIA_URL:%s:%s:%s:%d:%s]%s",
+                        messageId, fileName, ev.data.path("mimeType").asText(), size, downloadUrl,
+                        caption.isEmpty() ? "" : "\n" + caption);
+
+                // Store the incoming message
+                ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, mediaUrlMessage);
+                messageStorage.storeMessage(ev.from, incomingMessage);
+
+                // Show toast notification
+                notificationManager.showMessageNotification(ev.from, "📎 " + fileName);
+
+                // Refresh friends list to show notification badges
+                refreshFriendsUI();
+
+                // If we're currently chatting with this person, add to UI immediately and clear badge
+                if (currentChat != null && currentPeer != null &&
+                        currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                    System.out.println("[MainController] Adding media message to current chat UI");
+                    currentChat.addMessageBubble(incomingMessage);
+                    currentChat.scrollToBottom();
+
+                    // Clear notification count since user is viewing the chat
+                    notificationManager.clearNotificationCount(ev.from);
+                    refreshFriendsUI();
+                }
+            }
+        }));
         // === INCOMING MESSAGE HANDLER WITH RATE LIMITING ===
         AppCtx.BUS.on("chat", ev -> {
             // Check rate limiting first - don't even queue to UI thread if rate limited
@@ -1214,5 +1258,12 @@ public class MainController {
         rateLimiter.clearAllRateLimits();
         notificationManager.showSuccessNotification("Rate Limits Cleared", "All rate limits have been reset");
         System.out.println("[MainController] Cleared all rate limits");
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 }
