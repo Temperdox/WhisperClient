@@ -4,7 +4,6 @@ import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.models.Friend;
 import com.cottonlesergal.whisperclient.services.*;
 import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
-import com.cottonlesergal.whisperclient.services.SimpleMediaService.SimpleMediaMessage;
 import com.cottonlesergal.whisperclient.services.MediaPreviewService.MediaPreview;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
@@ -18,7 +17,6 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.shape.Circle;
-import javafx.scene.shape.Rectangle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -26,41 +24,41 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class ChatController {
+    // FXML Components
     @FXML private ScrollPane scrollPane;
     @FXML private VBox messagesBox;
     @FXML private TextField txtMessage;
     @FXML private Button btnAttach;
 
+    // Services
     private final DirectoryClient directory = new DirectoryClient();
     private final MessageStorageService storage = MessageStorageService.getInstance();
     private final MediaPreviewService previewService = MediaPreviewService.getInstance();
     private final NotificationManager notificationManager = NotificationManager.getInstance();
     private final HttpMediaClientService httpMediaService = HttpMediaClientService.getInstance();
 
+    // State
     private Friend friend;
-
-    // Preview system
     private VBox previewContainer;
     private final List<MediaPreview> pendingUploads = new ArrayList<>();
-
-    // Pagination and loading
     private final AtomicInteger currentPage = new AtomicInteger(0);
     private final AtomicBoolean isLoading = new AtomicBoolean(false);
     private final AtomicBoolean hasMoreMessages = new AtomicBoolean(true);
@@ -75,104 +73,10 @@ public class ChatController {
         setupPreviewContainer();
         setupAttachButton();
 
-        System.out.println("[ChatController] Initialized with enhanced media system and chunking support");
+        System.out.println("[ChatController] Initialized with HTTP media system");
     }
 
-    private void setupAttachButton() {
-        if (btnAttach != null) {
-            btnAttach.setOnAction(this::onAttachFile);
-            btnAttach.setTooltip(new Tooltip("Attach files (images, videos, audio, documents)"));
-        }
-    }
-
-    @FXML
-    private void onAttachFile(javafx.event.ActionEvent event) {
-        openFileChooser();
-    }
-
-    private void openFileChooser() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Select Files to Send");
-
-        // Set up file filters
-        fileChooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("All Supported",
-                        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp",
-                        "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv",
-                        "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac",
-                        "*.pdf", "*.txt", "*.doc", "*.docx", "*.zip"),
-                new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"),
-                new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv"),
-                new FileChooser.ExtensionFilter("Audio", "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac"),
-                new FileChooser.ExtensionFilter("Documents", "*.pdf", "*.txt", "*.doc", "*.docx"),
-                new FileChooser.ExtensionFilter("All Files", "*.*")
-        );
-
-        // Set initial directory to user's documents or pictures
-        String userHome = System.getProperty("user.home");
-        if (userHome != null) {
-            File documentsDir = new File(userHome, "Documents");
-            File picturesDir = new File(userHome, "Pictures");
-
-            if (picturesDir.exists()) {
-                fileChooser.setInitialDirectory(picturesDir);
-            } else if (documentsDir.exists()) {
-                fileChooser.setInitialDirectory(documentsDir);
-            }
-        }
-
-        // Show file chooser
-        Stage stage = (Stage) txtMessage.getScene().getWindow();
-        List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
-
-        if (selectedFiles != null && !selectedFiles.isEmpty()) {
-            System.out.println("[ChatController] Selected " + selectedFiles.size() + " files");
-
-            if (pendingUploads.size() + selectedFiles.size() > 10) {
-                showError("Upload Limit", "Cannot upload more than 10 files at once. Please select fewer files.");
-                return;
-            }
-
-            for (File file : selectedFiles) {
-                processFileForUpload(file);
-            }
-        }
-    }
-
-    private void setupPreviewContainer() {
-        previewContainer = new VBox(8);
-        previewContainer.getStyleClass().add("preview-container");
-        previewContainer.setPadding(new Insets(8));
-        previewContainer.setVisible(false);
-        previewContainer.setManaged(false);
-        previewContainer.setStyle("-fx-background-color: #36393f; -fx-border-color: #40444b; -fx-border-width: 1 0 0 0;");
-
-        // Add preview container to the UI structure
-        Platform.runLater(() -> {
-            if (scrollPane.getParent() instanceof VBox) {
-                VBox parent = (VBox) scrollPane.getParent();
-                // Find the input area (HBox with text field)
-                Node inputArea = null;
-                for (Node child : parent.getChildren()) {
-                    if (child instanceof HBox) {
-                        inputArea = child;
-                        break;
-                    }
-                }
-
-                if (inputArea != null) {
-                    int inputIndex = parent.getChildren().indexOf(inputArea);
-                    parent.getChildren().add(inputIndex, previewContainer);
-                    System.out.println("[ChatController] Added preview container to UI");
-                } else {
-                    System.err.println("[ChatController] Could not find input area to add preview container");
-                }
-            } else {
-                System.err.println("[ChatController] ScrollPane parent is not VBox: " +
-                        (scrollPane.getParent() != null ? scrollPane.getParent().getClass().getSimpleName() : "null"));
-            }
-        });
-    }
+    // ============== SETUP METHODS ==============
 
     private void setupScrollPane() {
         scrollPane.vvalueProperty().addListener((obs, oldVal, newVal) -> {
@@ -279,6 +183,121 @@ public class ChatController {
         });
     }
 
+    private void setupPreviewContainer() {
+        previewContainer = new VBox(8);
+        previewContainer.getStyleClass().add("preview-container");
+        previewContainer.setPadding(new Insets(8));
+        previewContainer.setVisible(false);
+        previewContainer.setManaged(false);
+        previewContainer.setStyle("-fx-background-color: #36393f; -fx-border-color: #40444b; -fx-border-width: 1 0 0 0;");
+
+        // Add preview container to the UI structure
+        Platform.runLater(() -> {
+            if (scrollPane.getParent() instanceof VBox) {
+                VBox parent = (VBox) scrollPane.getParent();
+                // Find the input area (HBox with text field)
+                Node inputArea = null;
+                for (Node child : parent.getChildren()) {
+                    if (child instanceof HBox) {
+                        inputArea = child;
+                        break;
+                    }
+                }
+
+                if (inputArea != null) {
+                    int inputIndex = parent.getChildren().indexOf(inputArea);
+                    parent.getChildren().add(inputIndex, previewContainer);
+                    System.out.println("[ChatController] Added preview container to UI");
+                } else {
+                    System.err.println("[ChatController] Could not find input area to add preview container");
+                }
+            } else {
+                System.err.println("[ChatController] ScrollPane parent is not VBox: " +
+                        (scrollPane.getParent() != null ? scrollPane.getParent().getClass().getSimpleName() : "null"));
+            }
+        });
+    }
+
+    private void setupAttachButton() {
+        if (btnAttach != null) {
+            btnAttach.setOnAction(this::onAttachFile);
+            btnAttach.setTooltip(new Tooltip("Attach files (images, videos, audio, documents)"));
+        }
+    }
+
+    // ============== INPUT HANDLING ==============
+
+    @FXML
+    private void onSend() {
+        String text = txtMessage.getText().trim();
+        if (text.isEmpty() && pendingUploads.isEmpty()) return;
+
+        if (!pendingUploads.isEmpty()) {
+            // Send media files - DON'T clear text field until after sending
+            sendPendingMedia(text);
+        } else if (!text.isEmpty()) {
+            // Send text message
+            sendTextMessage(text);
+            txtMessage.clear(); // Only clear for text messages
+        }
+    }
+
+    @FXML
+    private void onAttachFile(javafx.event.ActionEvent event) {
+        openFileChooser();
+    }
+
+    private void openFileChooser() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select Files to Send");
+
+        // Set up file filters
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("All Supported",
+                        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp",
+                        "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv",
+                        "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac",
+                        "*.pdf", "*.txt", "*.doc", "*.docx", "*.zip"),
+                new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"),
+                new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv"),
+                new FileChooser.ExtensionFilter("Audio", "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac"),
+                new FileChooser.ExtensionFilter("Documents", "*.pdf", "*.txt", "*.doc", "*.docx"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+
+        // Set initial directory to user's documents or pictures
+        String userHome = System.getProperty("user.home");
+        if (userHome != null) {
+            File documentsDir = new File(userHome, "Documents");
+            File picturesDir = new File(userHome, "Pictures");
+
+            if (picturesDir.exists()) {
+                fileChooser.setInitialDirectory(picturesDir);
+            } else if (documentsDir.exists()) {
+                fileChooser.setInitialDirectory(documentsDir);
+            }
+        }
+
+        // Show file chooser
+        Stage stage = (Stage) txtMessage.getScene().getWindow();
+        List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
+
+        if (selectedFiles != null && !selectedFiles.isEmpty()) {
+            System.out.println("[ChatController] Selected " + selectedFiles.size() + " files");
+
+            if (pendingUploads.size() + selectedFiles.size() > 10) {
+                showError("Upload Limit", "Cannot upload more than 10 files at once. Please select fewer files.");
+                return;
+            }
+
+            for (File file : selectedFiles) {
+                processFileForUpload(file);
+            }
+        }
+    }
+
+    // ============== DRAG & DROP HANDLING ==============
+
     private void handleDragOver(DragEvent event) {
         if (event.getGestureSource() != messagesBox && event.getDragboard().hasFiles()) {
             event.acceptTransferModes(TransferMode.COPY);
@@ -303,6 +322,8 @@ public class ChatController {
         event.setDropCompleted(true);
         event.consume();
     }
+
+    // ============== CLIPBOARD HANDLING ==============
 
     private void handleClipboardPaste() {
         Clipboard clipboard = Clipboard.getSystemClipboard();
@@ -355,6 +376,8 @@ public class ChatController {
             showError("Paste Error", "Failed to process pasted image: " + e.getMessage());
         }
     }
+
+    // ============== FILE PROCESSING ==============
 
     private void processFileForUpload(File file) {
         try {
@@ -413,20 +436,24 @@ public class ChatController {
                 " (uploads: " + pendingUploads.size() + ")");
     }
 
-    @FXML
-    private void onSend() {
-        String text = txtMessage.getText().trim();
-        if (text.isEmpty() && pendingUploads.isEmpty()) return;
-
-        if (!pendingUploads.isEmpty()) {
-            // Send media files - DON'T clear text field until after sending
-            sendPendingMedia(text);
-        } else if (!text.isEmpty()) {
-            // Send text message
-            sendTextMessage(text);
-            txtMessage.clear(); // Only clear for text messages
+    private void clearAllPreviews() {
+        // Don't clean up temp files of files currently being processed
+        for (MediaPreview preview : new ArrayList<>(pendingUploads)) {
+            if (!preview.isProcessing()) {
+                if (preview.getFile() != null && preview.getFile().getName().startsWith("pasted_image_")) {
+                    preview.getFile().delete();
+                }
+            } else {
+                System.out.println("[ChatController] Skipping cleanup of processing file: " + preview.getFileName());
+            }
         }
+
+        pendingUploads.clear();
+        previewContainer.getChildren().clear();
+        updatePreviewVisibility();
     }
+
+    // ============== MESSAGE SENDING ==============
 
     private void sendTextMessage(String text) {
         if (friend == null) return;
@@ -441,7 +468,7 @@ public class ChatController {
             scrollToBottom();
         });
 
-        // Send message (with chunking if needed)
+        // Send message via WebSocket
         new Thread(() -> {
             try {
                 directory.sendChat(friend.getUsername(), text);
@@ -457,7 +484,6 @@ public class ChatController {
 
     private void sendPendingMedia(String caption) {
         sendPendingMedia(new ArrayList<>(pendingUploads), caption);
-        clearAllPreviews();
     }
 
     private void sendPendingMedia(List<MediaPreview> previewsToSend, String caption) {
@@ -470,7 +496,10 @@ public class ChatController {
             sendMediaFile(preview, fileCaption);
         }
 
-        // DON'T clear previews here - let individual sendMediaFile handle cleanup after send
+        // Clear text field after starting send
+        if (!caption.isEmpty()) {
+            Platform.runLater(() -> txtMessage.clear());
+        }
     }
 
     private void sendMediaFile(MediaPreview preview, String caption) {
@@ -489,6 +518,7 @@ public class ChatController {
                         // Create a simple message bubble showing media was sent
                         ChatMessage mediaMessage = ChatMessage.fromOutgoing(friend.getUsername(),
                                 "📎 Sent: " + preview.getFileName() + " (" + formatFileSize(preview.getFileSize()) + ")");
+                        storage.storeMessage(friend.getUsername(), mediaMessage);
                         addMessageBubble(mediaMessage);
                         scrollToBottom();
 
@@ -519,46 +549,7 @@ public class ChatController {
                 });
     }
 
-    // Helper class for media processing results
-    private static class MediaResult {
-        final SimpleMediaMessage mediaMessage;
-        final ChatMessage chatMessage;
-        final String mediaText;
-
-        MediaResult(SimpleMediaMessage mediaMessage, ChatMessage chatMessage, String mediaText) {
-            this.mediaMessage = mediaMessage;
-            this.chatMessage = chatMessage;
-            this.mediaText = mediaText;
-        }
-    }
-
-    /**
-     * Process incoming chunked messages
-     */
-    public void processIncomingMessage(String messageText) {
-        // This method is called by MainController when receiving messages
-        // The chunking is already handled in InboxWs, so this receives complete messages
-        handleCompleteMessage(messageText);
-    }
-
-    /**
-     * Handle a complete message (after chunking processing)
-     */
-    private void handleCompleteMessage(String messageContent) {
-        if (friend != null) {
-            // Create ChatMessage and store it (already done in InboxWs, but kept for direct calls)
-            ChatMessage incomingMessage = ChatMessage.fromIncoming(friend.getUsername(), messageContent);
-
-            // Display in UI
-            Platform.runLater(() -> {
-                addMessageBubble(incomingMessage);
-                scrollToBottom();
-
-                // Clear notification since user is viewing the chat
-                notificationManager.clearNotificationCount(friend.getUsername());
-            });
-        }
-    }
+    // ============== MESSAGE DISPLAY ==============
 
     public void bindFriend(Friend f) {
         this.friend = f;
@@ -620,9 +611,9 @@ public class ChatController {
     private void processStoredMessage(ChatMessage message) {
         String content = message.getContent();
 
-        // Check for direct media messages first
-        if (content.startsWith("[DIRECT_MEDIA:")) {
-            Node mediaNode = createDirectMediaBubble(message, message.isFromMe());
+        // Check for URL-based media messages
+        if (content.startsWith("[MEDIA_URL:")) {
+            Node mediaNode = createMediaUrlBubble(message, message.isFromMe());
             messagesBox.getChildren().add(mediaNode);
         } else {
             // Regular text message
@@ -630,32 +621,46 @@ public class ChatController {
         }
     }
 
-    // Remove these old methods - they're not needed with HTTP media sending:
-    // - displayMediaMessage()
-    // - displayImageMessage()
-    // - displayVideoMessage()
-    // - displayAudioMessage()
-    // - displayFileMessage()
-
-    // The HTTP media system uses createDirectMediaBubble() instead
-
-    private void openImageFullscreen(Image image) {
-        Stage imageStage = new Stage();
-        imageStage.setTitle("Image Viewer");
-
-        ImageView fullImageView = new ImageView(image);
-        fullImageView.setPreserveRatio(true);
-        fullImageView.setFitWidth(800);
-        fullImageView.setFitHeight(600);
-
-        ScrollPane imageScrollPane = new ScrollPane(fullImageView);
-        imageScrollPane.setFitToWidth(true);
-        imageScrollPane.setFitToHeight(true);
-
-        javafx.scene.Scene scene = new javafx.scene.Scene(imageScrollPane, 820, 620);
-        imageStage.setScene(scene);
-        imageStage.show();
+    public void addMessageBubble(ChatMessage message) {
+        Node bubble = createMessageBubbleWithDeletion(message);
+        messagesBox.getChildren().add(bubble);
     }
+
+    private Node createMessageBubbleWithDeletion(ChatMessage message) {
+        boolean isFromMe = message.isFromMe();
+
+        // Check for URL-based media messages
+        if (message.getContent().startsWith("[MEDIA_URL:")) {
+            return createMediaUrlBubble(message, isFromMe);
+        }
+
+        // All other messages are text
+        VBox container = createMessageContainerWithDeletion(isFromMe, message);
+
+        Label textLabel = new Label(message.getContent());
+        textLabel.setWrapText(true);
+        textLabel.setMaxWidth(580);
+        textLabel.getStyleClass().add("message-content");
+        textLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 15px;");
+
+        container.getChildren().add(textLabel);
+        return container;
+    }
+
+    private void addTextMessageBubble(String text, boolean isFromMe) {
+        VBox container = createMessageContainer(isFromMe);
+
+        Label textLabel = new Label(text);
+        textLabel.setWrapText(true);
+        textLabel.setMaxWidth(580);
+        textLabel.getStyleClass().add("message-content");
+        textLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 15px;");
+
+        container.getChildren().add(textLabel);
+        messagesBox.getChildren().add(container);
+    }
+
+    // ============== MESSAGE CONTAINERS ==============
 
     private VBox createMessageContainer(boolean isFromMe) {
         VBox container = new VBox(8);
@@ -697,9 +702,6 @@ public class ChatController {
         return container;
     }
 
-    /**
-     * Enhanced method for creating message containers with deletion support
-     */
     private VBox createMessageContainerWithDeletion(boolean isFromMe, ChatMessage message) {
         VBox container = createMessageContainer(isFromMe);
 
@@ -713,9 +715,159 @@ public class ChatController {
         return container;
     }
 
-    /**
-     * Add context menu to message nodes for deletion
-     */
+    // ============== URL-BASED MEDIA HANDLING ==============
+
+    private Node createMediaUrlBubble(ChatMessage message, boolean isFromMe) {
+        VBox container = createMessageContainerWithDeletion(isFromMe, message);
+
+        try {
+            // Parse media URL format: [MEDIA_URL:id:fileName:mimeType:size:downloadUrl]caption
+            String content = message.getContent();
+            int endBracket = content.indexOf(']');
+            String mediaInfo = content.substring(11, endBracket); // Remove [MEDIA_URL:
+            String caption = endBracket + 1 < content.length() ? content.substring(endBracket + 1) : "";
+
+            String[] parts = mediaInfo.split(":", 5);
+            if (parts.length >= 5) {
+                String messageId = parts[0];
+                String fileName = parts[1];
+                String mimeType = parts[2];
+                long size = Long.parseLong(parts[3]);
+                String downloadUrl = parts[4];
+
+                // Create media display with download button
+                displayMediaUrl(container, fileName, mimeType, size, downloadUrl, caption);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to parse media URL: " + e.getMessage());
+            Label errorLabel = new Label("Failed to load media: " + e.getMessage());
+            errorLabel.setStyle("-fx-text-fill: #f04747;");
+            container.getChildren().add(errorLabel);
+        }
+
+        return container;
+    }
+
+    private void displayMediaUrl(VBox container, String fileName, String mimeType,
+                                 long size, String downloadUrl, String caption) {
+        // File icon and info
+        HBox fileDisplay = new HBox(12);
+        fileDisplay.setAlignment(Pos.CENTER_LEFT);
+
+        Label fileIcon = new Label();
+        fileIcon.setStyle("-fx-font-size: 32px;");
+
+        if (mimeType.startsWith("image/")) {
+            fileIcon.setText("🖼️");
+        } else if (mimeType.startsWith("video/")) {
+            fileIcon.setText("🎥");
+        } else if (mimeType.startsWith("audio/")) {
+            fileIcon.setText("🎵");
+        } else {
+            fileIcon.setText("📎");
+        }
+
+        VBox fileInfo = new VBox(2);
+
+        Label fileNameLabel = new Label(fileName);
+        fileNameLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-font-weight: 600;");
+
+        Label fileSizeLabel = new Label(formatFileSize(size));
+        fileSizeLabel.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
+
+        fileInfo.getChildren().addAll(fileNameLabel, fileSizeLabel);
+        fileDisplay.getChildren().addAll(fileIcon, fileInfo);
+
+        container.getChildren().add(fileDisplay);
+
+        // Download button
+        Button downloadButton = new Button("Download & Save");
+        downloadButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 6 12; -fx-font-size: 12px;");
+        downloadButton.setOnAction(e -> downloadMediaFile(downloadUrl, fileName, mimeType));
+        container.getChildren().add(downloadButton);
+
+        // Add caption if present
+        if (!caption.trim().isEmpty()) {
+            Label captionLabel = new Label(caption.trim());
+            captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
+            captionLabel.setWrapText(true);
+            container.getChildren().add(captionLabel);
+        }
+    }
+
+    private void downloadMediaFile(String downloadUrl, String fileName, String mimeType) {
+        // Show file chooser for save location
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Save Media File");
+        fileChooser.setInitialFileName(fileName);
+
+        // Set appropriate directory
+        String userHome = System.getProperty("user.home");
+        if (userHome != null) {
+            File saveDir;
+            if (mimeType.startsWith("image/")) {
+                saveDir = new File(userHome, "Pictures");
+            } else if (mimeType.startsWith("video/")) {
+                saveDir = new File(userHome, "Videos");
+            } else {
+                saveDir = new File(userHome, "Downloads");
+            }
+
+            if (saveDir.exists()) {
+                fileChooser.setInitialDirectory(saveDir);
+            }
+        }
+
+        Stage stage = (Stage) messagesBox.getScene().getWindow();
+        File saveFile = fileChooser.showSaveDialog(stage);
+
+        if (saveFile != null) {
+            // Download in background
+            CompletableFuture.runAsync(() -> {
+                try {
+                    System.out.println("[ChatController] Downloading media from: " + downloadUrl);
+
+                    HttpRequest req = HttpRequest.newBuilder(URI.create(downloadUrl))
+                            .header("authorization", "Bearer " + Config.APP_TOKEN)
+                            .GET()
+                            .build();
+
+                    HttpResponse<String> response = HttpClient.newHttpClient()
+                            .send(req, HttpResponse.BodyHandlers.ofString());
+
+                    if (response.statusCode() == 200) {
+                        // Parse response to get media data
+                        ObjectMapper mapper = new ObjectMapper();
+                        JsonNode mediaData = mapper.readTree(response.body());
+                        String base64Data = mediaData.path("data").asText();
+
+                        // Decode and save
+                        byte[] fileBytes = Base64.getDecoder().decode(base64Data);
+                        Files.write(saveFile.toPath(), fileBytes);
+
+                        System.out.println("[ChatController] Successfully saved media to: " + saveFile.getAbsolutePath());
+
+                        Platform.runLater(() -> {
+                            showInfo("Download Complete", "Saved " + fileName + " to " + saveFile.getName());
+                        });
+
+                    } else {
+                        throw new RuntimeException("HTTP " + response.statusCode() + ": " + response.body());
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("[ChatController] Failed to download media: " + e.getMessage());
+                    Platform.runLater(() -> {
+                        showError("Download Failed", "Could not download " + fileName + ": " + e.getMessage());
+                    });
+                }
+            });
+        }
+    }
+
+    // ============== MESSAGE DELETION ==============
+
     private void addMessageContextMenu(Node messageNode, String messageId, String username, boolean isSentByMe) {
         if (!isSentByMe) {
             return; // Only allow deleting own messages
@@ -747,248 +899,6 @@ public class ChatController {
         messageNode.setUserData(messageId);
     }
 
-    /**
-     * Enhanced createMessageBubble method with deletion support and HTTP media handling
-     */
-    private Node createMessageBubbleWithDeletion(ChatMessage message) {
-        boolean isFromMe = message.isFromMe();
-
-        // Check for direct media messages (HTTP sent)
-        if (message.getContent().startsWith("[DIRECT_MEDIA:")) {
-            return createDirectMediaBubble(message, isFromMe);
-        }
-
-        // All other messages are text
-        VBox container = createMessageContainerWithDeletion(isFromMe, message);
-
-        Label textLabel = new Label(message.getContent());
-        textLabel.setWrapText(true);
-        textLabel.setMaxWidth(580);
-        textLabel.getStyleClass().add("message-content");
-        textLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 15px;");
-
-        container.getChildren().add(textLabel);
-        return container;
-    }
-
-    /**
-     * Create message bubble for direct media (HTTP POST sent)
-     */
-    private Node createDirectMediaBubble(ChatMessage message, boolean isFromMe) {
-        VBox container = createMessageContainerWithDeletion(isFromMe, message);
-
-        try {
-            // Parse direct media format: [DIRECT_MEDIA:id:fileName:mimeType:size:base64Data]caption
-            String content = message.getContent();
-            int endBracket = content.indexOf(']');
-            String mediaInfo = content.substring(13, endBracket); // Remove [DIRECT_MEDIA:
-            String caption = endBracket + 1 < content.length() ? content.substring(endBracket + 1) : "";
-
-            String[] parts = mediaInfo.split(":", 5);
-            if (parts.length >= 5) {
-                String messageId = parts[0];
-                String fileName = parts[1];
-                String mimeType = parts[2];
-                long size = Long.parseLong(parts[3]);
-                String base64Data = parts[4];
-
-                // Create media display
-                if (mimeType.startsWith("image/")) {
-                    displayDirectImage(container, fileName, mimeType, size, base64Data, caption);
-                } else {
-                    displayDirectFile(container, fileName, mimeType, size, caption);
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("[ChatController] Failed to parse direct media: " + e.getMessage());
-            Label errorLabel = new Label("Failed to load media: " + e.getMessage());
-            errorLabel.setStyle("-fx-text-fill: #f04747;");
-            container.getChildren().add(errorLabel);
-        }
-
-        return container;
-    }
-
-    private void displayDirectImage(VBox container, String fileName, String mimeType,
-                                    long size, String base64Data, String caption) {
-        try {
-            // Decode and display image
-            byte[] imageBytes = Base64.getDecoder().decode(base64Data);
-            Image image = new Image(new ByteArrayInputStream(imageBytes));
-
-            ImageView imageView = new ImageView(image);
-            imageView.setPreserveRatio(true);
-            imageView.setFitWidth(Math.min(400, image.getWidth()));
-            imageView.setFitHeight(Math.min(300, image.getHeight()));
-
-            // Make image clickable for fullscreen view
-            imageView.setOnMouseClicked(e -> openImageFullscreen(image));
-            imageView.setStyle("-fx-cursor: hand;");
-
-            container.getChildren().add(imageView);
-
-            // Add file info
-            Label fileInfo = new Label(fileName + " (" + formatFileSize(size) + ")");
-            fileInfo.setStyle("-fx-text-fill: #72767d; -fx-font-size: 11px;");
-            container.getChildren().add(fileInfo);
-
-            // Add save button
-            Button saveButton = new Button("Save Image");
-            saveButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;");
-            saveButton.setOnAction(e -> saveImageToFile(imageBytes, fileName));
-            container.getChildren().add(saveButton);
-
-            // Add caption if present
-            if (!caption.trim().isEmpty()) {
-                Label captionLabel = new Label(caption.trim());
-                captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-                captionLabel.setWrapText(true);
-                container.getChildren().add(captionLabel);
-            }
-
-        } catch (Exception e) {
-            System.err.println("[ChatController] Failed to display direct image: " + e.getMessage());
-            Label errorLabel = new Label("Failed to load image: " + fileName);
-            errorLabel.setStyle("-fx-text-fill: #f04747;");
-            container.getChildren().add(errorLabel);
-        }
-    }
-
-    private void displayDirectFile(VBox container, String fileName, String mimeType,
-                                   long size, String caption) {
-        // File icon and info
-        HBox fileDisplay = new HBox(12);
-        fileDisplay.setAlignment(Pos.CENTER_LEFT);
-
-        Label fileIcon = new Label();
-        fileIcon.setStyle("-fx-font-size: 32px;");
-
-        if (mimeType.startsWith("video/")) {
-            fileIcon.setText("🎥");
-        } else if (mimeType.startsWith("audio/")) {
-            fileIcon.setText("🎵");
-        } else {
-            fileIcon.setText("📎");
-        }
-
-        VBox fileInfo = new VBox(2);
-
-        Label fileNameLabel = new Label(fileName);
-        fileNameLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-font-weight: 600;");
-
-        Label fileSizeLabel = new Label(formatFileSize(size));
-        fileSizeLabel.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
-
-        fileInfo.getChildren().addAll(fileNameLabel, fileSizeLabel);
-        fileDisplay.getChildren().addAll(fileIcon, fileInfo);
-
-        container.getChildren().add(fileDisplay);
-
-        // Add caption if present
-        if (!caption.trim().isEmpty()) {
-            Label captionLabel = new Label(caption.trim());
-            captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-            captionLabel.setWrapText(true);
-            container.getChildren().add(captionLabel);
-        }
-    }
-
-    private void saveImageToFile(byte[] imageBytes, String originalFileName) {
-        javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
-        fileChooser.setTitle("Save Image");
-        fileChooser.setInitialFileName(originalFileName);
-
-        // Set to Pictures directory
-        String userHome = System.getProperty("user.home");
-        if (userHome != null) {
-            File picturesDir = new File(userHome, "Pictures");
-            if (picturesDir.exists()) {
-                fileChooser.setInitialDirectory(picturesDir);
-            }
-        }
-
-        Stage stage = (Stage) messagesBox.getScene().getWindow();
-        File saveFile = fileChooser.showSaveDialog(stage);
-
-        if (saveFile != null) {
-            try {
-                Files.write(saveFile.toPath(), imageBytes);
-                System.out.println("[ChatController] Saved image to: " + saveFile.getAbsolutePath());
-                showInfo("Image Saved", "Image saved to " + saveFile.getName());
-            } catch (Exception e) {
-                System.err.println("[ChatController] Failed to save image: " + e.getMessage());
-                showError("Save Failed", "Could not save image: " + e.getMessage());
-            }
-        }
-    }
-
-    private void showInfo(String title, String message) {
-        if (notificationManager != null) {
-            notificationManager.showSuccessNotification(title, message);
-        }
-    }
-
-    private void addTextMessageBubble(String text, boolean isFromMe) {
-        VBox container = createMessageContainer(isFromMe);
-
-        Label textLabel = new Label(text);
-        textLabel.setWrapText(true);
-        textLabel.setMaxWidth(580);
-        textLabel.getStyleClass().add("message-content");
-        textLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 15px;");
-
-        container.getChildren().add(textLabel);
-        messagesBox.getChildren().add(container);
-    }
-
-    private Node createDMHeader() {
-        VBox headerContainer = new VBox(8);
-        headerContainer.getStyleClass().add("dm-header");
-        headerContainer.setPadding(new Insets(20, 24, 16, 24));
-
-        ImageView largeAvatar = new ImageView();
-        largeAvatar.setFitWidth(80);
-        largeAvatar.setFitHeight(80);
-        String avatarUrl = friend != null ? friend.getAvatar() : "";
-        largeAvatar.setImage(AvatarCache.get(avatarUrl, 80));
-
-        Circle largeClip = new Circle(40, 40, 40);
-        largeAvatar.setClip(largeClip);
-
-        Label displayName = new Label(friend != null ? friend.getDisplayName() : "Unknown");
-        displayName.getStyleClass().add("dm-header-name");
-
-        Label subtitle = new Label("This is the beginning of your direct message history with @" +
-                (friend != null ? friend.getUsername() : "unknown"));
-        subtitle.getStyleClass().add("dm-header-subtitle");
-        subtitle.setWrapText(true);
-        subtitle.setMaxWidth(400);
-
-        headerContainer.getChildren().addAll(largeAvatar, displayName, subtitle);
-        return headerContainer;
-    }
-
-    private void addDMHeader() {
-        messagesBox.getChildren().add(createDMHeader());
-    }
-
-    /**
-     * Clear all messages from the chat view
-     */
-    public void clearAllMessages() {
-        Platform.runLater(() -> {
-            if (messagesBox != null) {
-                messagesBox.getChildren().clear();
-                addDMHeader(); // Re-add the DM header
-            }
-            System.out.println("[ChatController] Cleared all messages from UI");
-        });
-    }
-
-    /**
-     * Delete a specific message from both storage and UI
-     */
     public void deleteMessage(String messageId, String username) {
         System.out.println("[ChatController] Deleting message " + messageId + " for user " + username);
 
@@ -1013,9 +923,18 @@ public class ChatController {
         }
     }
 
-    /**
-     * Refresh the entire conversation (useful after deletions)
-     */
+    // ============== UI MANAGEMENT ==============
+
+    public void clearAllMessages() {
+        Platform.runLater(() -> {
+            if (messagesBox != null) {
+                messagesBox.getChildren().clear();
+                addDMHeader(); // Re-add the DM header
+            }
+            System.out.println("[ChatController] Cleared all messages from UI");
+        });
+    }
+
     public void refreshConversation() {
         if (friend == null) {
             return;
@@ -1050,26 +969,35 @@ public class ChatController {
         });
     }
 
-    private void clearAllPreviews() {
-        // Don't clean up temp files of files currently being processed
-        for (MediaPreview preview : new ArrayList<>(pendingUploads)) {
-            if (!preview.isProcessing()) {
-                if (preview.getFile() != null && preview.getFile().getName().startsWith("pasted_image_")) {
-                    preview.getFile().delete();
-                }
-            } else {
-                System.out.println("[ChatController] Skipping cleanup of processing file: " + preview.getFileName());
-            }
-        }
+    private Node createDMHeader() {
+        VBox headerContainer = new VBox(8);
+        headerContainer.getStyleClass().add("dm-header");
+        headerContainer.setPadding(new Insets(20, 24, 16, 24));
 
-        pendingUploads.clear();
-        previewContainer.getChildren().clear();
-        updatePreviewVisibility();
+        ImageView largeAvatar = new ImageView();
+        largeAvatar.setFitWidth(80);
+        largeAvatar.setFitHeight(80);
+        String avatarUrl = friend != null ? friend.getAvatar() : "";
+        largeAvatar.setImage(AvatarCache.get(avatarUrl, 80));
+
+        Circle largeClip = new Circle(40, 40, 40);
+        largeAvatar.setClip(largeClip);
+
+        Label displayName = new Label(friend != null ? friend.getDisplayName() : "Unknown");
+        displayName.getStyleClass().add("dm-header-name");
+
+        Label subtitle = new Label("This is the beginning of your direct message history with @" +
+                (friend != null ? friend.getUsername() : "unknown"));
+        subtitle.getStyleClass().add("dm-header-subtitle");
+        subtitle.setWrapText(true);
+        subtitle.setMaxWidth(400);
+
+        headerContainer.getChildren().addAll(largeAvatar, displayName, subtitle);
+        return headerContainer;
     }
 
-    public void addMessageBubble(ChatMessage message) {
-        Node bubble = createMessageBubbleWithDeletion(message);
-        messagesBox.getChildren().add(bubble);
+    private void addDMHeader() {
+        messagesBox.getChildren().add(createDMHeader());
     }
 
     public void scrollToBottom() {
@@ -1084,6 +1012,8 @@ public class ChatController {
         }
     }
 
+    // ============== UTILITY METHODS ==============
+
     private void showError(String title, String message) {
         if (notificationManager != null) {
             notificationManager.showErrorNotification(title, message);
@@ -1094,10 +1024,48 @@ public class ChatController {
         }
     }
 
+    private void showInfo(String title, String message) {
+        if (notificationManager != null) {
+            notificationManager.showSuccessNotification(title, message);
+        } else {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, message);
+            alert.setTitle(title);
+            alert.showAndWait();
+        }
+    }
+
     private String formatFileSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+
+    // ============== PUBLIC API ==============
+
+    /**
+     * Process incoming messages (called by MainController)
+     */
+    public void processIncomingMessage(String messageText) {
+        handleCompleteMessage(messageText);
+    }
+
+    /**
+     * Handle a complete message
+     */
+    private void handleCompleteMessage(String messageContent) {
+        if (friend != null) {
+            // Create ChatMessage for display
+            ChatMessage incomingMessage = ChatMessage.fromIncoming(friend.getUsername(), messageContent);
+
+            // Display in UI
+            Platform.runLater(() -> {
+                addMessageBubble(incomingMessage);
+                scrollToBottom();
+
+                // Clear notification since user is viewing the chat
+                notificationManager.clearNotificationCount(friend.getUsername());
+            });
+        }
     }
 }

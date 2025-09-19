@@ -178,7 +178,7 @@ public class InboxWs implements WebSocket.Listener {
     }
 
     /**
-     * Handle direct media messages sent via HTTP POST
+     * Handle direct media messages sent via HTTP POST (now with URL references)
      */
     private void handleDirectMediaMessage(JsonNode messageNode, String from, String to, long timestamp) {
         try {
@@ -186,12 +186,13 @@ public class InboxWs implements WebSocket.Listener {
             String fileName = data.path("fileName").asText();
             String mimeType = data.path("mimeType").asText();
             long size = data.path("size").asLong();
-            String mediaData = data.path("data").asText();
+            String mediaId = data.path("mediaId").asText();
+            String downloadUrl = data.path("downloadUrl").asText();
             String caption = data.path("caption").asText("");
             String messageId = data.path("id").asText();
 
-            System.out.println("[InboxWs] Received direct media from " + from +
-                    ": " + fileName + " (" + formatFileSize(size) + ")");
+            System.out.println("[InboxWs] Received media notification from " + from +
+                    ": " + fileName + " (" + formatFileSize(size) + ") - Media ID: " + mediaId);
 
             // Apply rate limiting
             if (!rateLimiter.allowMessage(from)) {
@@ -199,14 +200,14 @@ public class InboxWs implements WebSocket.Listener {
                 return;
             }
 
-            // Create media message text for storage
-            String mediaMessageText = String.format("[DIRECT_MEDIA:%s:%s:%s:%d:%s]%s",
-                    messageId, fileName, mimeType, size, mediaData,
+            // Create compact media message text for storage (just URL reference)
+            String mediaMessageText = String.format("[MEDIA_URL:%s:%s:%s:%d:%s]%s",
+                    messageId, fileName, mimeType, size, downloadUrl,
                     caption.isEmpty() ? "" : "\n" + caption);
 
             // Create and store the message
             ChatMessage chatMessage = new ChatMessage(
-                    messageId, from, to, mediaMessageText, "media", false
+                    messageId, from, to, mediaMessageText, "media-url", false
             );
             chatMessage.setTimestamp(timestamp);
 
@@ -225,7 +226,7 @@ public class InboxWs implements WebSocket.Listener {
                             NotificationManager.ToastType.MESSAGE);
 
                     // Emit event to the event bus for any UI components that need it
-                    Event mediaEvent = new Event("media-direct", from, to, timestamp, data);
+                    Event mediaEvent = new Event("media-url", from, to, timestamp, data);
                     AppCtx.BUS.emit(mediaEvent);
 
                 } catch (Exception e) {
@@ -235,7 +236,7 @@ public class InboxWs implements WebSocket.Listener {
             });
 
         } catch (Exception e) {
-            System.err.println("[InboxWs] Error handling direct media message: " + e.getMessage());
+            System.err.println("[InboxWs] Error handling media URL message: " + e.getMessage());
             e.printStackTrace();
         }
     }
