@@ -157,74 +157,115 @@ Label.close-icon:hover {
     -fx-background-color: #f04747;
 }
 
-/* ===== ENHANCED MESSAGE COMPONENTS ===== */
-.enhanced-message-container {
+/* ===== MEDIA PREVIEW SYSTEM ===== */
+.preview-container {
+    -fx-background-color: #36393f;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 8;
     -fx-spacing: 8;
 }
 
-/* Image Messages */
-.image-message {
-    -fx-spacing: 4;
-    -fx-padding: 8;
+.media-preview {
     -fx-background-color: #2b2d31;
     -fx-background-radius: 8;
     -fx-border-color: #40444b;
     -fx-border-width: 1;
     -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 2);
 }
 
-.clickable-image {
+.preview-filename {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 13px;
+    -fx-font-weight: 600;
+}
+
+.preview-filesize {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 11px;
+}
+
+.preview-remove-button {
+    -fx-background-color: #f04747;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-padding: 4 8;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.preview-remove-button:hover {
+    -fx-background-color: #d73637;
+}
+
+.preview-send-button {
+    -fx-background-color: #5865f2;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-padding: 4 8;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.preview-send-button:hover {
+    -fx-background-color: #4752c4;
+}
+
+.upload-progress {
+    -fx-accent: #5865f2;
+}
+
+.upload-progress .bar {
+    -fx-background-color: #5865f2;
+    -fx-background-radius: 4;
+}
+
+.upload-progress .track {
+    -fx-background-color: #40444b;
+    -fx-background-radius: 4;
+}
+
+/* ===== MEDIA MESSAGE COMPONENTS ===== */
+.media-container {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 2);
+}
+
+.message-image {
     -fx-cursor: hand;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 2);
 }
 
-.clickable-image:hover {
+.message-image:hover {
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 6, 0, 0, 3);
 }
 
-.image-filename {
+.media-filename {
     -fx-text-fill: #b5bac1;
     -fx-font-size: 12px;
     -fx-font-style: italic;
 }
 
-/* File Messages */
-.file-message {
-    -fx-background-color: #2b2d31;
-    -fx-background-radius: 8;
-    -fx-border-color: #40444b;
-    -fx-border-width: 1;
-    -fx-border-radius: 8;
+.media-filesize {
+    -fx-text-fill: #87898c;
+    -fx-font-size: 11px;
 }
 
-.file-icon {
-    -fx-font-size: 32px;
-    -fx-pref-width: 48;
-    -fx-alignment: center;
-}
-
-.file-name {
-    -fx-text-fill: #dcddde;
-    -fx-font-size: 14px;
-    -fx-font-weight: 600;
-}
-
-.file-size {
-    -fx-text-fill: #b5bac1;
-    -fx-font-size: 12px;
-}
-
-.file-open-button {
+.media-action-button {
     -fx-background-color: #5865f2;
     -fx-text-fill: white;
     -fx-background-radius: 4;
-    -fx-border-radius: 4;
     -fx-padding: 6 12;
     -fx-font-size: 12px;
     -fx-cursor: hand;
 }
 
-.file-open-button:hover {
+.media-action-button:hover {
     -fx-background-color: #4752c4;
 }
 
