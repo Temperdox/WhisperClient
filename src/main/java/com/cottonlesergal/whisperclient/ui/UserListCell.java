@@ -3,17 +3,23 @@ package com.cottonlesergal.whisperclient.ui;
 import com.cottonlesergal.whisperclient.core.AppCtx;
 import com.cottonlesergal.whisperclient.events.Event;
 import com.cottonlesergal.whisperclient.models.UserSummary;
+import com.cottonlesergal.whisperclient.services.NotificationManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.shape.Circle;
 
 public class UserListCell extends ListCell<UserSummary> {
     private final HBox box = new HBox(10);
     private final ImageView avatar = new ImageView();
     private final Label name = new Label();
+    private final StackPane avatarContainer = new StackPane();
+    private final Label notificationBadge = new Label();
     private final ContextMenu contextMenu = new ContextMenu();
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -37,8 +43,76 @@ public class UserListCell extends ListCell<UserSummary> {
         Circle clip = new Circle(16, 16, 16);
         avatar.setClip(clip);
         name.getStyleClass().add("user-cell-name");
+
+        // Setup avatar container with notification badge
+        avatarContainer.getChildren().add(avatar);
+        setupNotificationBadge();
+
+        // Create spacer to push badge to the right
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
         box.setAlignment(Pos.CENTER_LEFT);
-        box.getChildren().addAll(avatar, name);
+        box.getChildren().addAll(avatarContainer, name, spacer);
+
+        // Only add notification badge to friends list
+        if (menuType == MenuType.FRIEND) {
+            box.getChildren().add(notificationBadge);
+        }
+    }
+
+    private void setupNotificationBadge() {
+        notificationBadge.setVisible(false);
+        notificationBadge.setManaged(false);
+        notificationBadge.setPrefSize(20, 20);
+        notificationBadge.setMinSize(20, 20);
+        notificationBadge.setMaxSize(20, 20);
+        notificationBadge.setAlignment(Pos.CENTER);
+
+        // Style the badge
+        notificationBadge.setStyle(
+                "-fx-background-color: #f23f43;" +
+                        "-fx-background-radius: 10;" +
+                        "-fx-text-fill: white;" +
+                        "-fx-font-size: 10px;" +
+                        "-fx-font-weight: bold;" +
+                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 2, 0, 0, 1);"
+        );
+    }
+
+    private void updateNotificationBadge(String username) {
+        if (menuType != MenuType.FRIEND || username == null) {
+            notificationBadge.setVisible(false);
+            notificationBadge.setManaged(false);
+            return;
+        }
+
+        int count = NotificationManager.getInstance().getNotificationCount(username);
+
+        if (count > 0) {
+            String displayCount = count > 99 ? "99+" : String.valueOf(count);
+            notificationBadge.setText(displayCount);
+            notificationBadge.setVisible(true);
+            notificationBadge.setManaged(true);
+
+            // Adjust size based on text length
+            if (count > 99) {
+                notificationBadge.setPrefSize(28, 20);
+                notificationBadge.setMinSize(28, 20);
+                notificationBadge.setMaxSize(28, 20);
+            } else if (count > 9) {
+                notificationBadge.setPrefSize(24, 20);
+                notificationBadge.setMinSize(24, 20);
+                notificationBadge.setMaxSize(24, 20);
+            } else {
+                notificationBadge.setPrefSize(20, 20);
+                notificationBadge.setMinSize(20, 20);
+                notificationBadge.setMaxSize(20, 20);
+            }
+        } else {
+            notificationBadge.setVisible(false);
+            notificationBadge.setManaged(false);
+        }
     }
 
     private void setupContextMenu() {
@@ -71,7 +145,19 @@ public class UserListCell extends ListCell<UserSummary> {
         openChat.setOnAction(e -> {
             UserSummary item = getItem();
             if (item != null) {
+                // Clear notifications when opening chat
+                NotificationManager.getInstance().clearNotificationCount(item.getUsername());
+                updateNotificationBadge(item.getUsername());
                 emitFriendEvent("open-chat", item.getUsername());
+            }
+        });
+
+        MenuItem markAsRead = new MenuItem("Mark as Read");
+        markAsRead.setOnAction(e -> {
+            UserSummary item = getItem();
+            if (item != null) {
+                NotificationManager.getInstance().clearNotificationCount(item.getUsername());
+                updateNotificationBadge(item.getUsername());
             }
         });
 
@@ -106,7 +192,7 @@ public class UserListCell extends ListCell<UserSummary> {
             }
         });
 
-        contextMenu.getItems().addAll(openChat, new SeparatorMenuItem(), removeFriend, blockUser);
+        contextMenu.getItems().addAll(openChat, markAsRead, new SeparatorMenuItem(), removeFriend, blockUser);
     }
 
     private void setupRequestMenu() {
@@ -182,6 +268,10 @@ public class UserListCell extends ListCell<UserSummary> {
                 ? item.getDisplay()
                 : item.getUsername();
         name.setText(displayText);
+
+        // Update notification badge
+        updateNotificationBadge(item.getUsername());
+
         setGraphic(box);
     }
 
@@ -194,6 +284,27 @@ public class UserListCell extends ListCell<UserSummary> {
             // Create updated UserSummary
             UserSummary updated = new UserSummary(username, newDisplay, newAvatar);
             updateItem(updated, false);
+        }
+    }
+
+    /**
+     * Refresh notification badge - call this when notification counts change
+     */
+    public void refreshNotificationBadge() {
+        UserSummary item = getItem();
+        if (item != null) {
+            updateNotificationBadge(item.getUsername());
+        }
+    }
+
+    /**
+     * Clear notification badge for this user
+     */
+    public void clearNotificationBadge() {
+        UserSummary item = getItem();
+        if (item != null) {
+            NotificationManager.getInstance().clearNotificationCount(item.getUsername());
+            updateNotificationBadge(item.getUsername());
         }
     }
 }

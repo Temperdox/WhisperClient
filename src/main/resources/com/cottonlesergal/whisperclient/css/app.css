@@ -59,6 +59,77 @@ Label.close-icon:hover {
     -fx-text-fill: #ffffff !important;
 }
 
+/* ===== NOTIFICATION BADGE ===== */
+.notification-badge {
+    -fx-background-color: #f23f43;
+    -fx-background-radius: 10;
+    -fx-text-fill: white;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 2, 0, 0, 1);
+    -fx-min-width: 20;
+    -fx-min-height: 20;
+    -fx-pref-width: 20;
+    -fx-pref-height: 20;
+    -fx-max-width: 28;
+    -fx-max-height: 20;
+}
+
+/* ===== TOAST NOTIFICATIONS ===== */
+.toast-container {
+    -fx-spacing: 8;
+    -fx-alignment: bottom-right;
+    -fx-padding: 20;
+}
+
+.toast {
+    -fx-background-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 8, 0, 0, 2);
+    -fx-padding: 12 16;
+    -fx-spacing: 12;
+    -fx-alignment: center-left;
+    -fx-max-width: 280;
+    -fx-pref-width: 280;
+}
+
+.toast-message {
+    -fx-background-color: #5865f2;
+}
+
+.toast-success {
+    -fx-background-color: #23a55a;
+}
+
+.toast-warning {
+    -fx-background-color: #f0b232;
+}
+
+.toast-error {
+    -fx-background-color: #f23f43;
+}
+
+.toast-info {
+    -fx-background-color: #4f545c;
+}
+
+.toast-icon {
+    -fx-text-fill: white;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+.toast-title {
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+}
+
+.toast-content {
+    -fx-text-fill: rgba(255,255,255,0.9);
+    -fx-font-size: 12px;
+}
+
 /* ===== TOP BAR ===== */
 .topbar {
     -fx-background-color: #313338;
@@ -148,7 +219,7 @@ Label.close-icon:hover {
     -fx-font-weight: 500;
 }
 
-.user-cell-sub  {
+.user-cell-sub {
     -fx-text-fill: #80848e;
     -fx-font-size: 12px;
 }
@@ -286,328 +357,7 @@ Label.close-icon:hover {
     -fx-background-color: #2a2d31;
 }
 
-.me-name   {
-    -fx-text-fill: #f2f3f5;
-    -fx-font-size: 14px;
-    -fx-font-weight: 600;
-}
-
-.me-handle {
-    -fx-text-fill: #80848e;
-    -fx-font-size: 12px;
-}
-
-/* ===== DISCORD-STYLE MESSAGE STYLING ===== */
-.message-row {
-    -fx-padding: 2 0;
-}
-
-.message-row:hover {
-    -fx-background-color: rgba(4, 4, 5, 0.07);
-}
-
-.message-author {
-    -fx-text-fill: #f2f3f5;
-    -fx-font-size: 15px;
-    -fx-font-weight: 600;
-}
-
-.message-timestamp {
-    -fx-text-fill: #949ba4;
-    -fx-font-size: 12px;
-    -fx-font-weight: 400;
-}
-
-.message-content {
-    -fx-text-fill: #dbdee1;
-    -fx-font-size: 15px;
-    -fx-font-weight: 400;
-    -fx-wrap-text: true;
-    -fx-line-spacing: 2px;
-}
-
-/* DM Header styling */
-.dm-header {
-    -fx-alignment: center;
-    -fx-padding: 16 24;
-}
-
-.dm-header-name {
-    -fx-text-fill: #f2f3f5;
-    -fx-font-size: 32px;
-    -fx-font-weight: 700;
-}
-
-.dm-header-subtitle {
-    -fx-text-fill: #b5bac1;
-    -fx-font-size: 16px;
-    -fx-font-weight: 400;
-    -fx-text-alignment: center;
-}
-
-/* ===== CHAT SCROLL PANE ===== */
-.chat-scroll {
-    -fx-background-color: #313338;
-    -fx-background-insets: 0;
-}
-
-.chat-scroll .viewport {
-    -fx-background-color: #313338;
-}
-
-.chat-scroll .content {
-    -fx-background-color: #313338;
-}
-
-.chat-scroll .scroll-bar:vertical {
-    -fx-background-color: transparent;
-    -fx-pref-width: 14;
-}
-
-.chat-scroll .scroll-bar:vertical .track {
-    -fx-background-color: transparent;
-}
-
-.chat-scroll .scroll-bar:vertical .thumb {
-    -fx-background-color: #1e1f22;
-    -fx-background-radius: 6;
-}
-
-.chat-scroll .scroll-bar:vertical .thumb:hover {
-    -fx-background-color: #2b2d31;
-}
-
-/* Message container */
-.messages-container {
-    -fx-spacing: 8;
-    -fx-padding: 16;
-    -fx-background-color: #313338;
-}
-
-/* ===== SEARCH LIST ===== */
-.search-list {
-    -fx-background-color: transparent;
-    -fx-max-height: 200;
-    -fx-border-color: #3f4147;
-    -fx-border-radius: 8;
-    -fx-border-width: 1;
-}
-
-.search-list:empty {
-    -fx-border-color: transparent;
-}
-
-/* ===== CHECKBOXES ===== */
-.check-box {
-    -fx-text-fill: #b5bac1;
-    -fx-font-size: 13px;
-}
-
-.check-box .box {
-    -fx-background-color: #1e1f22;
-    -fx-border-color: #4f545c;
-    -fx-border-radius: 3;
-    -fx-background-radius: 3;
-}
-
-.check-box:selected .box {
-    -fx-background-color: #5865f2;
-    -fx-border-color: #5865f2;
-}
-
-.check-box .mark {
-    -fx-background-color: transparent;
-    -fx-shape: "";
-}
-
-/* ===== CONTEXT MENUS ===== */
-.context-menu {
-    -fx-background-color: #111214;
-    -fx-background-radius: 8;
-    -fx-border-color: #1e1f22;
-    -fx-border-width: 1;
-    -fx-border-radius: 8;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 16, 0, 0, 4);
-    -fx-padding: 6;
-}
-
-.menu-item {
-    -fx-background-color: transparent;
-    -fx-text-fill: #dbdee1;
-    -fx-padding: 8 12;
-    -fx-background-radius: 4;
-    -fx-font-size: 14px;
-}
-
-.menu-item:focused {
-    -fx-background-color: #5865f2;
-    -fx-text-fill: #ffffff;
-}
-
-.menu-item .label {
-    -fx-text-fill: inherit;
-}
-
-/* Separator styling */
-.separator .line {
-    -fx-border-color: #3f4147;
-    -fx-border-width: 1 0 0 0;
-}
-
-/* ===== LOGIN SCREEN ===== */
-.login-container {
-    -fx-background-color: #2b2d31;
-    -fx-alignment: center;
-    -fx-spacing: 24;
-    -fx-padding: 48;
-}
-
-.login-title {
-    -fx-text-fill: #f2f3f5;
-    -fx-font-size: 24px;
-    -fx-font-weight: 600;
-}
-
-.login-subtitle {
-    -fx-text-fill: #b5bac1;
-    -fx-font-size: 16px;
-    -fx-font-weight: 400;
-}
-
-/* ===== BUTTONS ===== */
-.button {
-    -fx-background-color: #4f545c;
-    -fx-text-fill: #ffffff;
-    -fx-background-radius: 4;
-    -fx-border-radius: 4;
-    -fx-padding: 8 16;
-    -fx-font-size: 14px;
-    -fx-font-weight: 500;
-    -fx-border-color: transparent;
-    -fx-cursor: hand;
-}
-
-.button:hover {
-    -fx-background-color: #5d6269;
-}
-
-.button:pressed {
-    -fx-background-color: #484d54;
-}
-
-/* Round buttons */
-.round {
-    -fx-background-radius: 50%;
-    -fx-background-color: #4f545c;
-    -fx-text-fill: #b5bac1;
-    -fx-min-width: 32;
-    -fx-min-height: 32;
-    -fx-max-width: 32;
-    -fx-max-height: 32;
-    -fx-padding: 0;
-}
-
-.round:hover {
-    -fx-background-color: #5865f2;
-    -fx-text-fill: #ffffff;
-}
-
-/* Button variants */
-.button-primary {
-    -fx-background-color: #5865f2;
-    -fx-text-fill: #ffffff;
-}
-
-.button-primary:hover {
-    -fx-background-color: #4752c4;
-}
-
-.button-success {
-    -fx-background-color: #248046;
-    -fx-text-fill: #ffffff;
-}
-
-.button-success:hover {
-    -fx-background-color: #1a6334;
-}
-
-.button-danger {
-    -fx-background-color: #da373c;
-    -fx-text-fill: #ffffff;
-}
-
-.button-danger:hover {
-    -fx-background-color: #a12d30;
-}
-
-/* ===== USER ACTION BUTTONS ===== */
-.user-action-btn {
-    -fx-background-color: #35373c;
-    -fx-text-fill: #dbdee1;
-    -fx-background-radius: 6;
-    -fx-min-width: 30;
-    -fx-min-height: 30;
-    -fx-max-width: 30;
-    -fx-max-height: 30;
-    -fx-padding: 0;
-    -fx-font-size: 16px;
-    -fx-font-weight: normal;
-    -fx-border-color: transparent;
-    -fx-cursor: hand;
-}
-
-.user-action-btn:hover {
-    -fx-background-color: #404249;
-    -fx-text-fill: #f2f3f5;
-}
-
-.settings-btn {
-    -fx-background-color: #35373c;
-    -fx-text-fill: #dbdee1;
-}
-
-.settings-btn:hover {
-    -fx-background-color: #404249;
-    -fx-text-fill: #f2f3f5;
-}
-
-.logout-btn {
-    -fx-background-color: #f23f43;
-    -fx-text-fill: #ffffff;
-}
-
-.logout-btn:hover {
-    -fx-background-color: #da373c;
-    -fx-text-fill: #ffffff;
-}
-
-/* ===== CHAT AREA ===== */
-.chat-root {
-    -fx-background-color: #313338;
-}
-
-.composer {
-    -fx-background-color: #313338;
-    -fx-border-color: #1e1f22;
-    -fx-border-width: 1 0 0 0;
-    -fx-padding: 16;
-}
-
-/* ===== USER PROFILE CARD ===== */
-.me-card {
-    -fx-background-color: #232428;
-    -fx-padding: 8 12;
-    -fx-background-radius: 8;
-    -fx-border-color: #1e1f22;
-    -fx-border-width: 1 0 0 0;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 1);
-}
-
-.me-card:hover {
-    -fx-background-color: #2a2d31;
-}
-
-.me-name   {
+.me-name {
     -fx-text-fill: #f2f3f5;
     -fx-font-size: 14px;
     -fx-font-weight: 600;
@@ -802,6 +552,26 @@ Label.close-icon:hover {
 .separator .line {
     -fx-border-color: #3f4147;
     -fx-border-width: 1 0 0 0;
+}
+
+/* ===== LOGIN SCREEN ===== */
+.login-container {
+    -fx-background-color: #2b2d31;
+    -fx-alignment: center;
+    -fx-spacing: 24;
+    -fx-padding: 48;
+}
+
+.login-title {
+    -fx-text-fill: #f2f3f5;
+    -fx-font-size: 24px;
+    -fx-font-weight: 600;
+}
+
+.login-subtitle {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 16px;
+    -fx-font-weight: 400;
 }
 
 /* ===== PROGRESS INDICATORS ===== */
@@ -1072,15 +842,6 @@ Label.close-icon:hover {
 .offline-indicator {
     -fx-background-color: #80848e;
     -fx-background-radius: 50%;
-}
-
-/* ===== NOTIFICATION STYLING ===== */
-.notification {
-    -fx-background-color: #5865f2;
-    -fx-text-fill: #ffffff;
-    -fx-background-radius: 8;
-    -fx-padding: 12 16;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 8, 0, 0, 4);
 }
 
 /* ===== LOADING INDICATORS ===== */

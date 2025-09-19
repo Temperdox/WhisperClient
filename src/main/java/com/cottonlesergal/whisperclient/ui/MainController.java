@@ -41,6 +41,7 @@ public class MainController {
     private final DirectoryClient directory = new DirectoryClient();
     private final CredentialsStorageService credentialsStorage = CredentialsStorageService.getInstance();
     private final MessageStorageService messageStorage = MessageStorageService.getInstance();
+    private final NotificationManager notificationManager = NotificationManager.getInstance();
     private final AtomicLong searchSeq = new AtomicLong();
     private InboxWs inbox;
 
@@ -53,6 +54,14 @@ public class MainController {
         setupEventHandlers();
         setupUI();
         setupCustomTitleBar();
+
+        // Initialize notification manager
+        Platform.runLater(() -> {
+            if (customTitleBar.getScene() != null && customTitleBar.getScene().getWindow() instanceof Stage) {
+                Stage stage = (Stage) customTitleBar.getScene().getWindow();
+                notificationManager.initialize(stage);
+            }
+        });
 
         renderMe();
         refreshFriends();
@@ -119,17 +128,23 @@ public class MainController {
                 ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
                 messageStorage.storeMessage(ev.from, incomingMessage);
 
-                // If we're currently chatting with this person, add to UI immediately
+                // Show toast notification and increment badge count
+                notificationManager.showMessageNotification(ev.from, messageText);
+
+                // Refresh friends list to show notification badges
+                refreshFriendsUI();
+
+                // If we're currently chatting with this person, add to UI immediately and clear badge
                 if (currentChat != null && currentPeer != null &&
                         currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
                     System.out.println("[MainController] Adding message to current chat UI");
                     currentChat.addMessageBubble(incomingMessage);
                     currentChat.scrollToBottom();
-                }
 
-                // Show notification for new message
-                showNotification("New Message", "Message from " + ev.from + ": " +
-                        (messageText.length() > 50 ? messageText.substring(0, 50) + "..." : messageText));
+                    // Clear notification count since user is viewing the chat
+                    notificationManager.clearNotificationCount(ev.from);
+                    refreshFriendsUI();
+                }
             }
         }));
 
@@ -146,14 +161,14 @@ public class MainController {
         AppCtx.BUS.on("friend-request", ev -> Platform.runLater(() -> {
             System.out.println("[MainController] Received friend request from: " + ev.from);
             refreshPending();
-            showNotification("Friend Request", "New friend request from " + ev.from);
+            notificationManager.showFriendRequestNotification(ev.from);
         }));
 
         AppCtx.BUS.on("friend-accepted", ev -> Platform.runLater(() -> {
             System.out.println("[MainController] Friend request accepted by: " + ev.from);
             refreshFriends();
             refreshPending();
-            showNotification("Friend Added", ev.from + " accepted your friend request");
+            notificationManager.showFriendAcceptedNotification(ev.from);
         }));
 
         AppCtx.BUS.on("friend-removed", ev -> Platform.runLater(() -> {
@@ -165,7 +180,7 @@ public class MainController {
                     clearChat();
                 }
             }
-            showNotification("Friend Removed", "Friend relationship with " + ev.from + " has ended");
+            notificationManager.showFriendRemovedNotification(ev.from);
         }));
 
         AppCtx.BUS.on("user-blocked", ev -> Platform.runLater(() -> {
@@ -177,7 +192,7 @@ public class MainController {
                     clearChat();
                 }
             }
-            showNotification("User Blocked", "User " + ev.from + " has been blocked");
+            notificationManager.showBlockedNotification(ev.from);
         }));
 
         // Profile updates
@@ -192,7 +207,10 @@ public class MainController {
             String targetUser = ev.data.path("targetUser").asText("");
             UserSummary user = findUserInFriends(targetUser);
             if (user != null) {
+                // Clear notifications when opening chat
+                notificationManager.clearNotificationCount(targetUser);
                 openChatWith(user);
+                refreshFriendsUI(); // Refresh to clear badges
             }
         }));
 
@@ -241,7 +259,12 @@ public class MainController {
         listFriends.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 var sel = listFriends.getSelectionModel().getSelectedItem();
-                if (sel != null) openChatWith(sel);
+                if (sel != null) {
+                    // Clear notifications when opening chat
+                    notificationManager.clearNotificationCount(sel.getUsername());
+                    openChatWith(sel);
+                    refreshFriendsUI(); // Refresh to clear badges
+                }
             }
         });
     }
@@ -252,10 +275,10 @@ public class MainController {
             directory.removeFriend(username);
         }).thenRun(() -> Platform.runLater(() -> {
             refreshFriends();
-            showNotification("Friend Removed", "Removed " + username + " from friends");
+            notificationManager.showSuccessNotification("Friend Removed", "Removed " + username + " from friends");
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
-                showError("Failed to remove friend", throwable.getMessage());
+                notificationManager.showErrorNotification("Failed to remove friend", throwable.getMessage());
             });
             return null;
         });
@@ -268,13 +291,13 @@ public class MainController {
             if (success) {
                 refreshPending();
                 refreshFriends();
-                showNotification("Friend Added", "You are now friends with " + username);
+                notificationManager.showSuccessNotification("Friend Added", "You are now friends with " + username);
             } else {
-                showError("Failed to accept friend request", "Could not accept request from " + username);
+                notificationManager.showErrorNotification("Failed to accept friend request", "Could not accept request from " + username);
             }
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
-                showError("Failed to accept friend request", throwable.getMessage());
+                notificationManager.showErrorNotification("Failed to accept friend request", throwable.getMessage());
             });
             return null;
         });
@@ -286,13 +309,13 @@ public class MainController {
         }).thenAccept(success -> Platform.runLater(() -> {
             if (success) {
                 refreshPending();
-                showNotification("Request Declined", "Declined friend request from " + username);
+                notificationManager.showSuccessNotification("Request Declined", "Declined friend request from " + username);
             } else {
-                showError("Failed to decline request", "Could not decline request from " + username);
+                notificationManager.showErrorNotification("Failed to decline request", "Could not decline request from " + username);
             }
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
-                showError("Failed to decline request", throwable.getMessage());
+                notificationManager.showErrorNotification("Failed to decline request", throwable.getMessage());
             });
             return null;
         });
@@ -305,13 +328,13 @@ public class MainController {
             if (success) {
                 refreshFriends();
                 refreshPending();
-                showNotification("User Blocked", "Blocked " + username);
+                notificationManager.showSuccessNotification("User Blocked", "Blocked " + username);
             } else {
-                showError("Failed to block user", "Could not block " + username);
+                notificationManager.showErrorNotification("Failed to block user", "Could not block " + username);
             }
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
-                showError("Failed to block user", throwable.getMessage());
+                notificationManager.showErrorNotification("Failed to block user", throwable.getMessage());
             });
             return null;
         });
@@ -322,13 +345,13 @@ public class MainController {
             return directory.sendFriendRequest(username);
         }).thenAccept(success -> Platform.runLater(() -> {
             if (success) {
-                showNotification("Request Sent", "Friend request sent to " + username);
+                notificationManager.showSuccessNotification("Request Sent", "Friend request sent to " + username);
             } else {
-                showError("Failed to send request", "Could not send friend request to " + username);
+                notificationManager.showErrorNotification("Failed to send request", "Could not send friend request to " + username);
             }
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
-                showError("Failed to send request", throwable.getMessage());
+                notificationManager.showErrorNotification("Failed to send request", throwable.getMessage());
             });
             return null;
         });
@@ -448,6 +471,14 @@ public class MainController {
                     listFriends.getItems().setAll(friends);
                     System.out.println("[MainController] Refreshed friends list: " + friends.size() + " friends");
                 }));
+    }
+
+    private void refreshFriendsUI() {
+        // Refresh the UI to update notification badges
+        Platform.runLater(() -> {
+            // Force refresh of list cells to update badges
+            listFriends.refresh();
+        });
     }
 
     private void refreshPending() {
@@ -608,6 +639,10 @@ public class MainController {
             lblTitle.setText("DM with @" + peer.getUsername());
             currentPeer = peer;
 
+            // Clear notification count when opening chat
+            notificationManager.clearNotificationCount(peer.getUsername());
+            refreshFriendsUI();
+
             // Try different possible FXML locations
             String[] possiblePaths = {
                     "/com/cottonlesergal/whisperclient/fxml/chat.fxml",
@@ -627,7 +662,7 @@ public class MainController {
             }
 
             if (fx == null) {
-                showError("Chat FXML not found", "Could not locate chat.fxml in resources");
+                notificationManager.showErrorNotification("Chat FXML not found", "Could not locate chat.fxml in resources");
                 return;
             }
 
@@ -651,7 +686,7 @@ public class MainController {
             AnchorPane.setLeftAnchor(pane, 0.0);
         } catch (Exception e) {
             e.printStackTrace();
-            showError("Failed to open chat", e.getMessage());
+            notificationManager.showErrorNotification("Failed to open chat", e.getMessage());
         }
     }
 

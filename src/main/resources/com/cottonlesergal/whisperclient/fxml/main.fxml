@@ -5,111 +5,114 @@
 <?import javafx.scene.image.*?>
 <?import javafx.scene.shape.*?>
 
-<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.cottonlesergal.whisperclient.ui.MainController"
-      stylesheets="@../css/app.css">
-
-    <!-- Custom Title Bar -->
-    <HBox fx:id="customTitleBar" styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0" prefHeight="32">
-        <!-- App Icon and Title -->
-        <HBox fx:id="titleArea" alignment="CENTER_LEFT" spacing="8" HBox.hgrow="ALWAYS">
-            <padding><Insets left="12"/></padding>
-
-            <!-- App Icon -->
-            <Label text="💬" style="-fx-font-size: 16px;"/>
-
-            <!-- Window Title -->
-            <Label fx:id="lblWindowTitle" text="WhisperClient" styleClass="window-title"/>
-
-            <!-- Draggable area filler -->
-            <Region HBox.hgrow="ALWAYS"/>
-        </HBox>
-
-        <!-- Window Controls -->
-        <HBox alignment="CENTER_RIGHT" spacing="0">
-            <!-- Minimize Button -->
-            <Label text="−" styleClass="window-icon" onMouseClicked="#minimizeWindow"
-                   prefWidth="46" prefHeight="32"/>
-
-            <!-- Maximize/Restore Button -->
-            <Label fx:id="maxIcon" text="▢" styleClass="window-icon" onMouseClicked="#toggleMaximize"
-                   prefWidth="46" prefHeight="32"/>
-
-            <!-- Close Button -->
-            <Label text="x" styleClass="close-icon" onMouseClicked="#closeWindow"
-                   prefWidth="46" prefHeight="32"/>
-        </HBox>
-    </HBox>
+<StackPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.cottonlesergal.whisperclient.ui.MainController"
+           stylesheets="@../css/app.css">
 
     <!-- Main Application Content -->
-    <BorderPane VBox.vgrow="ALWAYS">
+    <VBox>
+        <!-- Custom Title Bar -->
+        <HBox fx:id="customTitleBar" styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0" prefHeight="32">
+            <!-- App Icon and Title -->
+            <HBox fx:id="titleArea" alignment="CENTER_LEFT" spacing="8" HBox.hgrow="ALWAYS">
+                <padding><Insets left="12"/></padding>
 
-        <!-- Top Navigation Bar -->
-        <top>
-            <HBox styleClass="topbar" alignment="CENTER_LEFT" spacing="10">
-                <Label fx:id="lblTitle" text="Friends" styleClass="title"/>
-                <Pane HBox.hgrow="ALWAYS"/>
-                <Button text="🎙" styleClass="round"/>
-                <Button text="🎥" styleClass="round"/>
-                <Button text="🔍" styleClass="round"/>
-                <!-- Debug Button - Remove this in production -->
-                <Button text="🐛" styleClass="round" onAction="#debugConnection">
-                    <tooltip><Tooltip text="Debug Connection"/></tooltip>
-                </Button>
+                <!-- App Icon -->
+                <Label text="💬" style="-fx-font-size: 16px;"/>
+
+                <!-- Window Title -->
+                <Label fx:id="lblWindowTitle" text="WhisperClient" styleClass="window-title"/>
+
+                <!-- Draggable area filler -->
+                <Region HBox.hgrow="ALWAYS"/>
             </HBox>
-        </top>
 
-        <!-- Left Sidebar -->
-        <left>
-            <VBox prefWidth="300" styleClass="sidebar" spacing="10">
-                <padding><Insets topRightBottomLeft="12"/></padding>
+            <!-- Window Controls -->
+            <HBox alignment="CENTER_RIGHT" spacing="0">
+                <!-- Minimize Button -->
+                <Label text="−" styleClass="window-icon" onMouseClicked="#minimizeWindow"
+                       prefWidth="46" prefHeight="32"/>
 
-                <!-- Search and Add Friend -->
-                <HBox spacing="8">
-                    <TextField fx:id="txtSearch" promptText="Find or start a conversation…" HBox.hgrow="ALWAYS"/>
-                    <Button text="Add" onAction="#onAddFriend"/>
+                <!-- Maximize/Restore Button -->
+                <Label fx:id="maxIcon" text="▢" styleClass="window-icon" onMouseClicked="#toggleMaximize"
+                       prefWidth="46" prefHeight="32"/>
+
+                <!-- Close Button -->
+                <Label text="x" styleClass="close-icon" onMouseClicked="#closeWindow"
+                       prefWidth="46" prefHeight="32"/>
+            </HBox>
+        </HBox>
+
+        <!-- Main Application Content -->
+        <BorderPane VBox.vgrow="ALWAYS">
+
+            <!-- Top Navigation Bar -->
+            <top>
+                <HBox styleClass="topbar" alignment="CENTER_LEFT" spacing="10">
+                    <Label fx:id="lblTitle" text="Friends" styleClass="title"/>
+                    <Pane HBox.hgrow="ALWAYS"/>
+                    <Button text="🎙" styleClass="round"/>
+                    <Button text="🎥" styleClass="round"/>
+                    <Button text="🔍" styleClass="round"/>
+                    <!-- Debug Button - Remove this in production -->
+                    <Button text="🐛" styleClass="round" onAction="#debugConnection">
+                        <tooltip><Tooltip text="Debug Connection"/></tooltip>
+                    </Button>
                 </HBox>
+            </top>
 
-                <!-- Search Results -->
-                <ListView fx:id="listSearch" prefHeight="140" styleClass="search-list"/>
+            <!-- Left Sidebar -->
+            <left>
+                <VBox prefWidth="300" styleClass="sidebar" spacing="10">
+                    <padding><Insets topRightBottomLeft="12"/></padding>
 
-                <!-- Friends List -->
-                <Label text="Direct Messages" styleClass="subtitle"/>
-                <ListView fx:id="listFriends" VBox.vgrow="ALWAYS"/>
-
-                <!-- Friend Requests -->
-                <Label text="Requests" styleClass="subtitle"/>
-                <ListView fx:id="listRequests"/>
-
-                <!-- User Profile Card -->
-                <HBox fx:id="meCard" spacing="10" alignment="CENTER_LEFT" styleClass="me-card">
-                    <ImageView fx:id="imgMe" fitWidth="32" fitHeight="32">
-                        <clip><Circle radius="16" centerX="16" centerY="16"/></clip>
-                    </ImageView>
-                    <VBox spacing="2" HBox.hgrow="ALWAYS">
-                        <Label fx:id="lblMeName" text="Display Name" styleClass="me-name"/>
-                        <Label fx:id="lblMeHandle" text="@username" styleClass="me-handle"/>
-                    </VBox>
-                    <!-- User action buttons -->
-                    <HBox spacing="4">
-                        <Button fx:id="btnSettings" text="⚙" styleClass="user-action-btn settings-btn"
-                                onAction="#onSettings">
-                            <tooltip><Tooltip text="Settings"/></tooltip>
-                        </Button>
-                        <Button fx:id="btnLogout" text="⭕" styleClass="user-action-btn logout-btn"
-                                onAction="#onLogout">
-                            <tooltip><Tooltip text="Sign Out"/></tooltip>
-                        </Button>
+                    <!-- Search and Add Friend -->
+                    <HBox spacing="8">
+                        <TextField fx:id="txtSearch" promptText="Find or start a conversation…" HBox.hgrow="ALWAYS"/>
+                        <Button text="Add" onAction="#onAddFriend"/>
                     </HBox>
-                </HBox>
-            </VBox>
-        </left>
 
-        <!-- Chat Area -->
-        <center>
-            <AnchorPane fx:id="chatHost" styleClass="chat-root"/>
-        </center>
+                    <!-- Search Results -->
+                    <ListView fx:id="listSearch" prefHeight="140" styleClass="search-list"/>
 
-    </BorderPane>
+                    <!-- Friends List -->
+                    <Label text="Direct Messages" styleClass="subtitle"/>
+                    <ListView fx:id="listFriends" VBox.vgrow="ALWAYS"/>
 
-</VBox>
+                    <!-- Friend Requests -->
+                    <Label text="Requests" styleClass="subtitle"/>
+                    <ListView fx:id="listRequests"/>
+
+                    <!-- User Profile Card -->
+                    <HBox fx:id="meCard" spacing="10" alignment="CENTER_LEFT" styleClass="me-card">
+                        <ImageView fx:id="imgMe" fitWidth="32" fitHeight="32">
+                            <clip><Circle radius="16" centerX="16" centerY="16"/></clip>
+                        </ImageView>
+                        <VBox spacing="2" HBox.hgrow="ALWAYS">
+                            <Label fx:id="lblMeName" text="Display Name" styleClass="me-name"/>
+                            <Label fx:id="lblMeHandle" text="@username" styleClass="me-handle"/>
+                        </VBox>
+                        <!-- User action buttons -->
+                        <HBox spacing="4">
+                            <Button fx:id="btnSettings" text="⚙" styleClass="user-action-btn settings-btn"
+                                    onAction="#onSettings">
+                                <tooltip><Tooltip text="Settings"/></tooltip>
+                            </Button>
+                            <Button fx:id="btnLogout" text="⭕" styleClass="user-action-btn logout-btn"
+                                    onAction="#onLogout">
+                                <tooltip><Tooltip text="Sign Out"/></tooltip>
+                            </Button>
+                        </HBox>
+                    </HBox>
+                </VBox>
+            </left>
+
+            <!-- Chat Area -->
+            <center>
+                <AnchorPane fx:id="chatHost" styleClass="chat-root"/>
+            </center>
+
+        </BorderPane>
+    </VBox>
+
+</StackPane>
