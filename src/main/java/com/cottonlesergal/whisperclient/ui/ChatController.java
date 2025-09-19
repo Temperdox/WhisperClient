@@ -368,14 +368,19 @@ public class ChatController {
 
             // Set up remove callback
             preview.setOnRemove(() -> {
-                pendingUploads.remove(preview);
-                Platform.runLater(() -> {
-                    previewContainer.getChildren().remove(preview.getPreviewNode());
-                    updatePreviewVisibility();
+                // Only remove if not currently sending
+                if (!preview.isProcessing()) {
+                    pendingUploads.remove(preview);
+                    Platform.runLater(() -> {
+                        previewContainer.getChildren().remove(preview.getPreviewNode());
+                        updatePreviewVisibility();
 
-                    // Clean up temp file if it's a pasted image
-                    previewService.cleanupTempFile(preview);
-                });
+                        // Clean up temp file if it's a pasted image
+                        previewService.cleanupTempFile(preview);
+                    });
+                } else {
+                    System.out.println("[ChatController] Cannot remove preview - currently processing");
+                }
             });
 
             // Set up send callback (individual file send)
@@ -414,14 +419,13 @@ public class ChatController {
         if (text.isEmpty() && pendingUploads.isEmpty()) return;
 
         if (!pendingUploads.isEmpty()) {
-            // Send media files
+            // Send media files - DON'T clear text field until after sending
             sendPendingMedia(text);
         } else if (!text.isEmpty()) {
             // Send text message
             sendTextMessage(text);
+            txtMessage.clear(); // Only clear for text messages
         }
-
-        txtMessage.clear();
     }
 
     private void sendTextMessage(String text) {
@@ -466,7 +470,7 @@ public class ChatController {
             sendMediaFile(preview, fileCaption);
         }
 
-        // DON'T remove previews immediately - let sendMediaFile handle cleanup after successful send
+        // DON'T clear previews here - let individual sendMediaFile handle cleanup after send
     }
 
     private void sendMediaFile(MediaPreview preview, String caption) {
@@ -1047,9 +1051,14 @@ public class ChatController {
     }
 
     private void clearAllPreviews() {
+        // Don't clean up temp files of files currently being processed
         for (MediaPreview preview : new ArrayList<>(pendingUploads)) {
-            if (preview.getFile() != null && preview.getFile().getName().startsWith("pasted_image_")) {
-                preview.getFile().delete();
+            if (!preview.isProcessing()) {
+                if (preview.getFile() != null && preview.getFile().getName().startsWith("pasted_image_")) {
+                    preview.getFile().delete();
+                }
+            } else {
+                System.out.println("[ChatController] Skipping cleanup of processing file: " + preview.getFileName());
             }
         }
 
