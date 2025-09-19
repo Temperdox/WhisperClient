@@ -10,14 +10,13 @@ import javafx.application.Platform;
 
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class InboxWs implements WebSocket.Listener {
     private static final ObjectMapper M = new ObjectMapper();
@@ -178,7 +177,7 @@ public class InboxWs implements WebSocket.Listener {
     }
 
     /**
-     * Handle direct media messages sent via HTTP POST (now with URL references)
+     * Handle direct media messages sent via HTTP POST (now with auto-download)
      */
     private void handleDirectMediaMessage(JsonNode messageNode, String from, String to, long timestamp) {
         try {
@@ -192,7 +191,7 @@ public class InboxWs implements WebSocket.Listener {
             String messageId = data.path("id").asText();
 
             System.out.println("[InboxWs] Received media notification from " + from +
-                    ": " + fileName + " (" + formatFileSize(size) + ") - Media ID: " + mediaId);
+                    ": " + fileName + " (" + formatFileSize(size) + ") - Auto-downloading...");
 
             // Apply rate limiting
             if (!rateLimiter.allowMessage(from)) {
@@ -200,43 +199,73 @@ public class InboxWs implements WebSocket.Listener {
                 return;
             }
 
-            // Create compact media message text for storage (just URL reference)
-            String mediaMessageText = String.format("[MEDIA_URL:%s:%s:%s:%d:%s]%s",
-                    messageId, fileName, mimeType, size, downloadUrl,
-                    caption.isEmpty() ? "" : "\n" + caption);
-
-            // Create and store the message
-            ChatMessage chatMessage = new ChatMessage(
-                    messageId, from, to, mediaMessageText, "media-url", false
-            );
-            chatMessage.setTimestamp(timestamp);
-
-            // Store the message
-            messageStorage.storeMessage(from, chatMessage);
-
-            // Notify UI on JavaFX thread
-            Platform.runLater(() -> {
+            // Auto-download the media immediately
+            CompletableFuture.runAsync(() -> {
                 try {
-                    // Update notification count
-                    notificationManager.incrementNotificationCount(from);
+                    // Download media data
+                    HttpRequest req = HttpRequest.newBuilder(URI.create(downloadUrl))
+                            .header("authorization", "Bearer " + Config.APP_TOKEN)
+                            .GET()
+                            .build();
 
-                    // Show notification
-                    notificationManager.showToast("Media from " + from,
-                            "📎 " + fileName + " (" + formatFileSize(size) + ")",
-                            NotificationManager.ToastType.MESSAGE);
+                    HttpClient client = HttpClient.newHttpClient();
+                    HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
 
-                    // Emit event to the event bus for any UI components that need it
-                    Event mediaEvent = new Event("media-url", from, to, timestamp, data);
-                    AppCtx.BUS.emit(mediaEvent);
+                    if (response.statusCode() == 200) {
+                        // Parse response to get media data
+                        ObjectMapper mapper = new ObjectMapper();
+                        JsonNode mediaData = mapper.readTree(response.body());
+                        String base64Data = mediaData.path("data").asText();
+
+                        // Create inline media message with embedded data
+                        String inlineMediaMessage = String.format("[INLINE_MEDIA:%s:%s:%s:%d:%s]%s",
+                                messageId, fileName, mimeType, size, base64Data,
+                                caption.isEmpty() ? "" : "\n" + caption);
+
+                        // Create and store the message
+                        ChatMessage chatMessage = new ChatMessage(
+                                messageId, from, to, inlineMediaMessage, "inline-media", false
+                        );
+                        chatMessage.setTimestamp(timestamp);
+
+                        // Store the message
+                        messageStorage.storeMessage(from, chatMessage);
+
+                        System.out.println("[InboxWs] Auto-downloaded and stored media: " + fileName);
+
+                        // Notify UI on JavaFX thread
+                        Platform.runLater(() -> {
+                            try {
+                                // Update notification count
+                                notificationManager.incrementNotificationCount(from);
+
+                                // Show notification
+                                notificationManager.showToast("Media from " + from,
+                                        "📎 " + fileName + " (" + formatFileSize(size) + ")",
+                                        NotificationManager.ToastType.MESSAGE);
+
+                                // Emit event to the event bus for UI components
+                                Event mediaEvent = new Event("media-inline", from, to, timestamp, data);
+                                AppCtx.BUS.emit(mediaEvent);
+
+                            } catch (Exception e) {
+                                System.err.println("[InboxWs] Error updating UI for media: " + e.getMessage());
+                                e.printStackTrace();
+                            }
+                        });
+
+                    } else {
+                        System.err.println("[InboxWs] Failed to download media: HTTP " + response.statusCode());
+                    }
 
                 } catch (Exception e) {
-                    System.err.println("[InboxWs] Error updating UI for media: " + e.getMessage());
+                    System.err.println("[InboxWs] Error auto-downloading media: " + e.getMessage());
                     e.printStackTrace();
                 }
             });
 
         } catch (Exception e) {
-            System.err.println("[InboxWs] Error handling media URL message: " + e.getMessage());
+            System.err.println("[InboxWs] Error handling media notification: " + e.getMessage());
             e.printStackTrace();
         }
     }

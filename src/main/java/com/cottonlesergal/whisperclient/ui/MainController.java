@@ -119,43 +119,26 @@ public class MainController {
     }
 
     private void setupEventHandlers() {
-        // === MEDIA HANDLER - FOR HTTP MEDIA MESSAGES ===
-        AppCtx.BUS.on("media-direct", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received media notification from: " + ev.from);
+        // === INLINE MEDIA HANDLER - FOR AUTO-DOWNLOADED MEDIA ===
+        AppCtx.BUS.on("media-inline", ev -> Platform.runLater(() -> {
+            System.out.println("[MainController] Received inline media from: " + ev.from);
 
             if (ev.data != null) {
                 String fileName = ev.data.path("fileName").asText("");
-                String mediaId = ev.data.path("mediaId").asText("");
                 long size = ev.data.path("size").asLong(0);
 
-                System.out.println("[MainController] Media details: " + fileName +
-                        " (" + formatFileSize(size) + "), ID: " + mediaId);
+                System.out.println("[MainController] Processing inline media: " + fileName +
+                        " (" + formatFileSize(size) + ")");
 
-                // Create media URL message format for storage and display
-                String downloadUrl = ev.data.path("downloadUrl").asText("");
-                String caption = ev.data.path("caption").asText("");
-                String messageId = ev.data.path("id").asText("");
+                // The message is already stored by InboxWs, just need to update UI
 
-                String mediaUrlMessage = String.format("[MEDIA_URL:%s:%s:%s:%d:%s]%s",
-                        messageId, fileName, ev.data.path("mimeType").asText(), size, downloadUrl,
-                        caption.isEmpty() ? "" : "\n" + caption);
-
-                // Store the incoming message
-                ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, mediaUrlMessage);
-                messageStorage.storeMessage(ev.from, incomingMessage);
-
-                // Show toast notification
-                notificationManager.showMessageNotification(ev.from, "📎 " + fileName);
-
-                // Refresh friends list to show notification badges
-                refreshFriendsUI();
-
-                // If we're currently chatting with this person, add to UI immediately and clear badge
+                // If we're currently chatting with this person, refresh the chat to show new media
                 if (currentChat != null && currentPeer != null &&
                         currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                    System.out.println("[MainController] Adding media message to current chat UI");
-                    currentChat.addMessageBubble(incomingMessage);
-                    currentChat.scrollToBottom();
+                    System.out.println("[MainController] Refreshing chat to show new media");
+
+                    // Reload the last few messages to pick up the new media message
+                    currentChat.refreshConversation();
 
                     // Clear notification count since user is viewing the chat
                     notificationManager.clearNotificationCount(ev.from);

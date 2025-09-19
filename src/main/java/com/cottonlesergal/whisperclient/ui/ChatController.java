@@ -611,9 +611,9 @@ public class ChatController {
     private void processStoredMessage(ChatMessage message) {
         String content = message.getContent();
 
-        // Check for URL-based media messages
-        if (content.startsWith("[MEDIA_URL:")) {
-            Node mediaNode = createMediaUrlBubble(message, message.isFromMe());
+        // Check for inline media messages (auto-downloaded)
+        if (content.startsWith("[INLINE_MEDIA:")) {
+            Node mediaNode = createInlineMediaBubble(message, message.isFromMe());
             messagesBox.getChildren().add(mediaNode);
         } else {
             // Regular text message
@@ -629,9 +629,9 @@ public class ChatController {
     private Node createMessageBubbleWithDeletion(ChatMessage message) {
         boolean isFromMe = message.isFromMe();
 
-        // Check for URL-based media messages
-        if (message.getContent().startsWith("[MEDIA_URL:")) {
-            return createMediaUrlBubble(message, isFromMe);
+        // Check for inline media messages (auto-downloaded with embedded data)
+        if (message.getContent().startsWith("[INLINE_MEDIA:")) {
+            return createInlineMediaBubble(message, isFromMe);
         }
 
         // All other messages are text
@@ -715,16 +715,16 @@ public class ChatController {
         return container;
     }
 
-    // ============== URL-BASED MEDIA HANDLING ==============
+    // ============== INLINE MEDIA HANDLING ==============
 
-    private Node createMediaUrlBubble(ChatMessage message, boolean isFromMe) {
+    private Node createInlineMediaBubble(ChatMessage message, boolean isFromMe) {
         VBox container = createMessageContainerWithDeletion(isFromMe, message);
 
         try {
-            // Parse media URL format: [MEDIA_URL:id:fileName:mimeType:size:downloadUrl]caption
+            // Parse inline media format: [INLINE_MEDIA:id:fileName:mimeType:size:base64Data]caption
             String content = message.getContent();
             int endBracket = content.indexOf(']');
-            String mediaInfo = content.substring(11, endBracket); // Remove [MEDIA_URL:
+            String mediaInfo = content.substring(14, endBracket); // Remove [INLINE_MEDIA:
             String caption = endBracket + 1 < content.length() ? content.substring(endBracket + 1) : "";
 
             String[] parts = mediaInfo.split(":", 5);
@@ -733,14 +733,14 @@ public class ChatController {
                 String fileName = parts[1];
                 String mimeType = parts[2];
                 long size = Long.parseLong(parts[3]);
-                String downloadUrl = parts[4];
+                String base64Data = parts[4];
 
-                // Create media display with download button
-                displayMediaUrl(container, fileName, mimeType, size, downloadUrl, caption);
+                // Display media inline and auto-save
+                displayInlineMedia(container, fileName, mimeType, size, base64Data, caption);
             }
 
         } catch (Exception e) {
-            System.err.println("[ChatController] Failed to parse media URL: " + e.getMessage());
+            System.err.println("[ChatController] Failed to parse inline media: " + e.getMessage());
             Label errorLabel = new Label("Failed to load media: " + e.getMessage());
             errorLabel.setStyle("-fx-text-fill: #f04747;");
             container.getChildren().add(errorLabel);
@@ -749,121 +749,140 @@ public class ChatController {
         return container;
     }
 
-    private void displayMediaUrl(VBox container, String fileName, String mimeType,
-                                 long size, String downloadUrl, String caption) {
-        // File icon and info
-        HBox fileDisplay = new HBox(12);
-        fileDisplay.setAlignment(Pos.CENTER_LEFT);
+    private void displayInlineMedia(VBox container, String fileName, String mimeType,
+                                    long size, String base64Data, String caption) {
+        try {
+            // Auto-save the file to appropriate directory
+            autoSaveMediaFile(fileName, mimeType, base64Data);
 
-        Label fileIcon = new Label();
-        fileIcon.setStyle("-fx-font-size: 32px;");
+            if (mimeType.startsWith("image/")) {
+                // Display image inline
+                byte[] imageBytes = Base64.getDecoder().decode(base64Data);
+                Image image = new Image(new ByteArrayInputStream(imageBytes));
 
-        if (mimeType.startsWith("image/")) {
-            fileIcon.setText("🖼️");
-        } else if (mimeType.startsWith("video/")) {
-            fileIcon.setText("🎥");
-        } else if (mimeType.startsWith("audio/")) {
-            fileIcon.setText("🎵");
-        } else {
-            fileIcon.setText("📎");
-        }
+                ImageView imageView = new ImageView(image);
+                imageView.setPreserveRatio(true);
+                imageView.setFitWidth(Math.min(400, image.getWidth()));
+                imageView.setFitHeight(Math.min(300, image.getHeight()));
 
-        VBox fileInfo = new VBox(2);
+                // Make image clickable for fullscreen view
+                imageView.setOnMouseClicked(e -> openImageFullscreen(image));
+                imageView.setStyle("-fx-cursor: hand;");
 
-        Label fileNameLabel = new Label(fileName);
-        fileNameLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-font-weight: 600;");
+                container.getChildren().add(imageView);
 
-        Label fileSizeLabel = new Label(formatFileSize(size));
-        fileSizeLabel.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
+                // Add file info below image
+                Label fileInfo = new Label(fileName + " (" + formatFileSize(size) + ") - Auto-saved");
+                fileInfo.setStyle("-fx-text-fill: #72767d; -fx-font-size: 11px;");
+                container.getChildren().add(fileInfo);
 
-        fileInfo.getChildren().addAll(fileNameLabel, fileSizeLabel);
-        fileDisplay.getChildren().addAll(fileIcon, fileInfo);
+            } else {
+                // Display file info for non-images
+                HBox fileDisplay = new HBox(12);
+                fileDisplay.setAlignment(Pos.CENTER_LEFT);
 
-        container.getChildren().add(fileDisplay);
+                Label fileIcon = new Label();
+                fileIcon.setStyle("-fx-font-size: 32px;");
 
-        // Download button
-        Button downloadButton = new Button("Download & Save");
-        downloadButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 6 12; -fx-font-size: 12px;");
-        downloadButton.setOnAction(e -> downloadMediaFile(downloadUrl, fileName, mimeType));
-        container.getChildren().add(downloadButton);
+                if (mimeType.startsWith("video/")) {
+                    fileIcon.setText("🎥");
+                } else if (mimeType.startsWith("audio/")) {
+                    fileIcon.setText("🎵");
+                } else {
+                    fileIcon.setText("📎");
+                }
 
-        // Add caption if present
-        if (!caption.trim().isEmpty()) {
-            Label captionLabel = new Label(caption.trim());
-            captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
-            captionLabel.setWrapText(true);
-            container.getChildren().add(captionLabel);
+                VBox fileInfo = new VBox(2);
+
+                Label fileNameLabel = new Label(fileName + " - Auto-saved");
+                fileNameLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-font-weight: 600;");
+
+                Label fileSizeLabel = new Label(formatFileSize(size));
+                fileSizeLabel.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
+
+                fileInfo.getChildren().addAll(fileNameLabel, fileSizeLabel);
+                fileDisplay.getChildren().addAll(fileIcon, fileInfo);
+
+                container.getChildren().add(fileDisplay);
+            }
+
+            // Add caption if present
+            if (!caption.trim().isEmpty()) {
+                Label captionLabel = new Label(caption.trim());
+                captionLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px;");
+                captionLabel.setWrapText(true);
+                container.getChildren().add(captionLabel);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to display inline media: " + e.getMessage());
+            Label errorLabel = new Label("Failed to display media: " + fileName);
+            errorLabel.setStyle("-fx-text-fill: #f04747;");
+            container.getChildren().add(errorLabel);
         }
     }
 
-    private void downloadMediaFile(String downloadUrl, String fileName, String mimeType) {
-        // Show file chooser for save location
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Save Media File");
-        fileChooser.setInitialFileName(fileName);
+    private void autoSaveMediaFile(String fileName, String mimeType, String base64Data) {
+        try {
+            // Determine save directory based on file type
+            String userHome = System.getProperty("user.home");
+            if (userHome == null) {
+                System.err.println("[ChatController] Cannot auto-save - no user home directory");
+                return;
+            }
 
-        // Set appropriate directory
-        String userHome = System.getProperty("user.home");
-        if (userHome != null) {
             File saveDir;
             if (mimeType.startsWith("image/")) {
-                saveDir = new File(userHome, "Pictures");
+                saveDir = new File(userHome, "Pictures/WhisperClient");
             } else if (mimeType.startsWith("video/")) {
-                saveDir = new File(userHome, "Videos");
+                saveDir = new File(userHome, "Videos/WhisperClient");
             } else {
-                saveDir = new File(userHome, "Downloads");
+                saveDir = new File(userHome, "Downloads/WhisperClient");
             }
 
-            if (saveDir.exists()) {
-                fileChooser.setInitialDirectory(saveDir);
+            // Create directory if it doesn't exist
+            if (!saveDir.exists()) {
+                saveDir.mkdirs();
             }
+
+            // Create unique filename if file already exists
+            File saveFile = new File(saveDir, fileName);
+            int counter = 1;
+            while (saveFile.exists()) {
+                String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+                String extension = fileName.substring(fileName.lastIndexOf('.'));
+                saveFile = new File(saveDir, baseName + "_" + counter + extension);
+                counter++;
+            }
+
+            // Decode and save
+            byte[] fileBytes = Base64.getDecoder().decode(base64Data);
+            Files.write(saveFile.toPath(), fileBytes);
+
+            System.out.println("[ChatController] Auto-saved media to: " + saveFile.getAbsolutePath());
+
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to auto-save media: " + e.getMessage());
+            e.printStackTrace();
         }
+    }
 
-        Stage stage = (Stage) messagesBox.getScene().getWindow();
-        File saveFile = fileChooser.showSaveDialog(stage);
+    private void openImageFullscreen(Image image) {
+        Stage imageStage = new Stage();
+        imageStage.setTitle("Image Viewer");
 
-        if (saveFile != null) {
-            // Download in background
-            CompletableFuture.runAsync(() -> {
-                try {
-                    System.out.println("[ChatController] Downloading media from: " + downloadUrl);
+        ImageView fullImageView = new ImageView(image);
+        fullImageView.setPreserveRatio(true);
+        fullImageView.setFitWidth(800);
+        fullImageView.setFitHeight(600);
 
-                    HttpRequest req = HttpRequest.newBuilder(URI.create(downloadUrl))
-                            .header("authorization", "Bearer " + Config.APP_TOKEN)
-                            .GET()
-                            .build();
+        ScrollPane imageScrollPane = new ScrollPane(fullImageView);
+        imageScrollPane.setFitToWidth(true);
+        imageScrollPane.setFitToHeight(true);
 
-                    HttpResponse<String> response = HttpClient.newHttpClient()
-                            .send(req, HttpResponse.BodyHandlers.ofString());
-
-                    if (response.statusCode() == 200) {
-                        // Parse response to get media data
-                        ObjectMapper mapper = new ObjectMapper();
-                        JsonNode mediaData = mapper.readTree(response.body());
-                        String base64Data = mediaData.path("data").asText();
-
-                        // Decode and save
-                        byte[] fileBytes = Base64.getDecoder().decode(base64Data);
-                        Files.write(saveFile.toPath(), fileBytes);
-
-                        System.out.println("[ChatController] Successfully saved media to: " + saveFile.getAbsolutePath());
-
-                        Platform.runLater(() -> {
-                            showInfo("Download Complete", "Saved " + fileName + " to " + saveFile.getName());
-                        });
-
-                    } else {
-                        throw new RuntimeException("HTTP " + response.statusCode() + ": " + response.body());
-                    }
-
-                } catch (Exception e) {
-                    System.err.println("[ChatController] Failed to download media: " + e.getMessage());
-                    Platform.runLater(() -> {
-                        showError("Download Failed", "Could not download " + fileName + ": " + e.getMessage());
-                    });
-                }
-            });
-        }
+        javafx.scene.Scene scene = new javafx.scene.Scene(imageScrollPane, 820, 620);
+        imageStage.setScene(scene);
+        imageStage.show();
     }
 
     // ============== MESSAGE DELETION ==============
