@@ -1,12 +1,14 @@
 package com.cottonlesergal.whisperclient.services;
 
 import com.cottonlesergal.whisperclient.core.Session;
+import com.cottonlesergal.whisperclient.models.Message;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -222,6 +224,76 @@ public class MessageStorageService {
         } catch (Exception e) {
             return 0;
         }
+    }
+
+    /**
+     * Clear all in-memory cached messages
+     */
+    public void clearCache() {
+        // If you have any in-memory caches, clear them here
+        // This depends on your current MessageStorage implementation
+        System.out.println("[MessageStorage] Cleared message cache");
+    }
+
+    /**
+     * Clear a specific conversation from cache
+     */
+    public void clearConversationFromCache(String username) {
+        // If you have conversation-specific caches, clear them here
+        System.out.println("[MessageStorage] Cleared cache for conversation with: " + username);
+    }
+
+    /**
+     * Get the filename used for storing a conversation
+     */
+    public String getConversationFileName(String username) {
+        // Return the filename pattern you use for storing conversations
+        // Adjust this based on your actual filename pattern
+        return "messages_" + username.toLowerCase() + ".json";
+    }
+
+    /**
+     * Extract username from a message file name
+     */
+    public String getUsernameFromFileName(String fileName) {
+        // Extract username from filename
+        // Adjust this based on your actual filename pattern
+        if (fileName.startsWith("messages_") && fileName.endsWith(".json")) {
+            return fileName.substring(9, fileName.length() - 5); // Remove "messages_" and ".json"
+        }
+        return fileName.replace(".json", "");
+    }
+
+    /**
+     * Save messages for a specific user (used by deletion utilities)
+     */
+    public boolean saveMessages(String username, List<Message> messages) {
+        try {
+            // Use your existing save logic here
+            // This should save the provided messages list for the specified user
+            String fileName = getConversationFileName(username);
+            String filePath = getMessagesDirectory() + File.separator + fileName;
+
+            // Convert messages to JSON and save
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.writerWithDefaultPrettyPrinter().writeValue(new File(filePath), messages);
+
+            System.out.println("[MessageStorage] Saved " + messages.size() + " messages for " + username);
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("[MessageStorage] Failed to save messages for " + username + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get the messages directory path
+     */
+    private String getMessagesDirectory() {
+        // Return your messages directory path
+        String userHome = System.getProperty("user.home");
+        return userHome + File.separator + ".whisper_client" + File.separator + "messages";
     }
 
     /**

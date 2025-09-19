@@ -16,6 +16,10 @@ import javafx.scene.layout.AnchorPane;
 import javafx.scene.layout.HBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import java.util.Optional;
+import java.util.UUID;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
@@ -490,6 +494,280 @@ public class MainController {
                 });
             }
         }
+    }
+
+    /**
+     * DEBUG: Delete all locally stored messages
+     */
+    @FXML
+    private void debugDeleteAllMessages() {
+        System.out.println("[DEBUG] Delete all messages requested");
+
+        Alert confirmAlert = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmAlert.setTitle("Delete All Messages");
+        confirmAlert.setHeaderText("Are you sure?");
+        confirmAlert.setContentText("This will permanently delete ALL locally stored messages for ALL conversations.\n\nA backup will be created automatically.");
+
+        Optional<ButtonType> result = confirmAlert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            // Run in background thread
+            new Thread(() -> {
+                boolean success = MessageStorageUtility.getInstance().deleteAllMessages();
+
+                Platform.runLater(() -> {
+                    if (success) {
+                        showInfoAlert("Success", "All messages deleted successfully",
+                                "All local message storage has been cleared. A backup was created.");
+
+                        // Clear UI if chat view is open
+                        if (currentChat != null) {
+                            currentChat.clearAllMessages();
+                        }
+
+                    } else {
+                        showErrorAlert("Error", "Failed to delete messages",
+                                "Some messages could not be deleted. Check the console for details.");
+                    }
+                });
+            }).start();
+        }
+    }
+
+    /**
+     * DEBUG: Delete messages for current conversation
+     */
+    @FXML
+    private void debugDeleteCurrentConversation() {
+        UserSummary selectedFriend = listFriends.getSelectionModel().getSelectedItem();
+
+        if (selectedFriend == null) {
+            showErrorAlert("No Conversation", "No conversation selected",
+                    "Please select a friend/conversation first.");
+            return;
+        }
+
+        String username = selectedFriend.getUsername();
+        System.out.println("[DEBUG] Delete conversation with " + username + " requested");
+
+        Alert confirmAlert = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmAlert.setTitle("Delete Conversation");
+        confirmAlert.setHeaderText("Delete conversation with " + username + "?");
+        confirmAlert.setContentText("This will permanently delete all messages in this conversation.\n\nA backup will be created automatically.");
+
+        Optional<ButtonType> result = confirmAlert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            // Run in background thread
+            new Thread(() -> {
+                boolean success = MessageStorageUtility.getInstance().deleteConversationMessages(username);
+
+                Platform.runLater(() -> {
+                    if (success) {
+                        showInfoAlert("Success", "Conversation deleted",
+                                "All messages with " + username + " have been deleted.");
+
+                        // Clear UI
+                        if (currentChat != null) {
+                            currentChat.clearAllMessages();
+                        }
+
+                    } else {
+                        showErrorAlert("Error", "Failed to delete conversation",
+                                "Could not delete conversation messages. Check the console for details.");
+                    }
+                });
+            }).start();
+        }
+    }
+
+    /**
+     * DEBUG: Show storage information
+     */
+    @FXML
+    private void debugShowStorageInfo() {
+        System.out.println("[DEBUG] Storage info requested");
+        MessageStorageUtility.getInstance().printStorageDebugInfo();
+
+        MessageStorageUtility.StorageStats stats = MessageStorageUtility.getInstance().getStorageStats();
+
+        String info = String.format(
+                "Storage Information:\n\n" +
+                        "Conversations: %d\n" +
+                        "Total Messages: %d\n" +
+                        "Storage Size: %s\n" +
+                        "Backups: %d\n\n" +
+                        "See console for detailed file listing.",
+                stats.conversationCount,
+                stats.totalMessages,
+                formatBytes(stats.totalSizeBytes),
+                stats.backupCount
+        );
+
+        showInfoAlert("Storage Information", "Current storage status", info);
+    }
+
+    /**
+     * DEBUG: Show chunking service status
+     */
+    @FXML
+    private void debugShowChunkingStatus() {
+        System.out.println("[DEBUG] Chunking service status requested");
+        MessageChunkingService.getInstance().printBufferStatus();
+        MessageChunkingService.getInstance().cleanupOldMessages();
+
+        showInfoAlert("Chunking Service", "Buffer status printed to console",
+                "Check the console for detailed chunking service information.");
+    }
+
+    /**
+     * DEBUG: Test message chunking
+     */
+    @FXML
+    private void debugTestMessageChunking() {
+        System.out.println("[DEBUG] Testing message chunking...");
+
+        // Create a large test message
+        StringBuilder largeMessage = new StringBuilder();
+        largeMessage.append("$MEDIA${\"id\":\"test-media\",\"type\":\"image\",\"mime\":\"image/png\",\"name\":\"test.png\",\"size\":1000000,\"data\":\"");
+
+        // Add lots of base64-like data to make it large
+        String testData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+        for (int i = 0; i < 1000; i++) { // Make it big enough to require chunking
+            largeMessage.append(testData);
+        }
+        largeMessage.append("\"}");
+
+        String originalMessage = largeMessage.toString();
+        System.out.println("[DEBUG] Original message size: " + originalMessage.length() + " bytes");
+
+        // Test chunking
+        String[] chunks = MessageChunkingService.getInstance().splitMessage(originalMessage);
+        System.out.println("[DEBUG] Message split into " + chunks.length + " chunks");
+
+        // Test reassembly
+        for (String chunk : chunks) {
+            String result = MessageChunkingService.getInstance().processReceivedMessage(chunk);
+            if (result != null) {
+                System.out.println("[DEBUG] Reassembled message size: " + result.length() + " bytes");
+                System.out.println("[DEBUG] Messages match: " + originalMessage.equals(result));
+                break;
+            }
+        }
+
+        showInfoAlert("Chunking Test", "Test completed",
+                "Chunking test completed. Check console for results.");
+    }
+
+    /**
+     * DEBUG: Create backup
+     */
+    @FXML
+    private void debugCreateBackup() {
+        System.out.println("[DEBUG] Creating manual backup...");
+
+        new Thread(() -> {
+            String backupPath = MessageStorageUtility.getInstance().createBackup("manual_backup");
+
+            Platform.runLater(() -> {
+                if (backupPath != null) {
+                    showInfoAlert("Backup Created", "Manual backup completed",
+                            "Backup created at:\n" + backupPath);
+                } else {
+                    showErrorAlert("Backup Failed", "Could not create backup",
+                            "Failed to create backup. Check console for details.");
+                }
+            });
+        }).start();
+    }
+
+    /**
+     * DEBUG: Send test chunked message to self
+     */
+    @FXML
+    private void debugSendTestChunkedMessage() {
+        if (Session.me == null) {
+            showErrorAlert("Not Logged In", "No session", "You must be logged in to send test messages.");
+            return;
+        }
+
+        System.out.println("[DEBUG] Sending test chunked message to self...");
+
+        // Create a large image message using SimpleMediaService
+        SimpleMediaService mediaService = SimpleMediaService.getInstance();
+
+        // Create test media message
+        SimpleMediaService.SimpleMediaMessage testMedia = new SimpleMediaService.SimpleMediaMessage();
+        testMedia.setId(UUID.randomUUID().toString());
+        testMedia.setType("image");
+        testMedia.setMimeType("image/png");
+        testMedia.setFileName("test_large_image.png");
+        testMedia.setSize(2 * 1024 * 1024); // 2MB
+
+        // Create large base64 data (simulate large image)
+        StringBuilder largeData = new StringBuilder();
+        String sampleData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+        for (int i = 0; i < 5000; i++) {
+            largeData.append(sampleData);
+        }
+        testMedia.setData(largeData.toString());
+        testMedia.setChecksum("test-checksum-" + System.currentTimeMillis());
+        testMedia.setTimestamp(System.currentTimeMillis());
+
+        String mediaMessageText = mediaService.createMediaMessageText(testMedia);
+        System.out.println("[DEBUG] Created test media message (" + mediaMessageText.length() + " bytes)");
+
+        // Send to self
+        new Thread(() -> {
+            try {
+                directory.sendChat(Session.me.getUsername(), mediaMessageText);
+                System.out.println("[DEBUG] Test chunked message sent successfully");
+            } catch (Exception e) {
+                System.err.println("[DEBUG] Failed to send test message: " + e.getMessage());
+            }
+        }).start();
+
+        showInfoAlert("Test Message", "Sending test chunked message",
+                "A large test message is being sent to yourself. Check the console and chat for results.");
+    }
+
+    /**
+     * DEBUG: Clear chunking service buffer
+     */
+    @FXML
+    private void debugClearChunkingBuffer() {
+        System.out.println("[DEBUG] Clearing chunking service buffer...");
+
+        MessageChunkingService chunkingService = MessageChunkingService.getInstance();
+        chunkingService.cleanupOldMessages();
+
+        // Force clear all incomplete messages by setting timeout to 0
+        chunkingService.printBufferStatus();
+
+        showInfoAlert("Buffer Cleared", "Chunking buffer cleared",
+                "All incomplete chunked messages have been cleared from the buffer.");
+    }
+
+    // Helper methods
+    private void showInfoAlert(String title, String header, String content) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(content);
+        alert.showAndWait();
+    }
+
+    private void showErrorAlert(String title, String header, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(content);
+        alert.showAndWait();
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     private void renderMe() {

@@ -1,14 +1,19 @@
 package com.cottonlesergal.whisperclient.services;
 
 import com.cottonlesergal.whisperclient.core.AppCtx;
+import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.events.Event;
+import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import javafx.application.Platform;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -17,6 +22,10 @@ import java.util.concurrent.TimeUnit;
 public class InboxWs implements WebSocket.Listener {
     private static final ObjectMapper M = new ObjectMapper();
     private final MessageChunkingService chunkingService = MessageChunkingService.getInstance();
+    private final MessageStorageService messageStorage = MessageStorageService.getInstance();
+    private final RateLimiter rateLimiter = RateLimiter.getInstance();
+    private final NotificationManager notificationManager = NotificationManager.getInstance();
+
     private WebSocket ws;
     private String workerUrl;
     private String username;
@@ -29,6 +38,9 @@ public class InboxWs implements WebSocket.Listener {
     private int reconnectAttempts = 0;
     private static final int MAX_RECONNECT_ATTEMPTS = 5;
     private static final long INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
+
+    // Cleanup timer for chunked messages
+    private Timer chunkCleanupTimer;
 
     public void connect(String workerBaseUrl, String username, String jwtBearer) {
         this.workerUrl = workerBaseUrl;
@@ -83,6 +95,9 @@ public class InboxWs implements WebSocket.Listener {
 
         // Send a ping to verify connection
         webSocket.sendText("ping", true);
+
+        // Start periodic cleanup of chunked messages
+        startChunkCleanupTimer();
     }
 
     @Override
@@ -118,35 +133,8 @@ public class InboxWs implements WebSocket.Listener {
                 return null;
             }
 
-            // Parse and emit event
-            JsonNode n = M.readTree(completeMessage);
-
-            // Log the parsed event for debugging
-            System.out.println("[InboxWs] Parsed event - Type: " + n.path("type").asText("") +
-                    ", From: " + n.path("from").asText("") +
-                    ", To: " + n.path("to").asText(""));
-
-            Event ev = new Event(
-                    n.path("type").asText(""),
-                    n.path("from").asText(null),
-                    n.path("to").asText(null),
-                    n.path("at").asLong(System.currentTimeMillis()),
-                    n.path("data").isMissingNode() ? n : n.path("data")
-            );
-
-            // Additional handling for events with top-level fields (like signal)
-            if (n.has("kind")) {
-                ev = new Event(
-                        n.path("type").asText("signal"),
-                        n.path("from").asText(null),
-                        n.path("to").asText(null),
-                        n.path("at").asLong(System.currentTimeMillis()),
-                        n
-                );
-            }
-
-            System.out.println("[InboxWs] Emitting event to AppCtx.BUS: " + ev.type);
-            AppCtx.BUS.emit(ev);
+            // Handle the complete message
+            handleCompleteMessage(completeMessage);
 
         } catch (Exception e) {
             System.err.println("[InboxWs] Error processing message: " + e.getMessage());
@@ -158,6 +146,114 @@ public class InboxWs implements WebSocket.Listener {
 
         webSocket.request(1);
         return null;
+    }
+
+    /**
+     * Handle a complete message (either regular or reassembled from chunks)
+     */
+    private void handleCompleteMessage(String messageText) {
+        try {
+            JsonNode messageNode = M.readTree(messageText);
+
+            String type = messageNode.path("type").asText();
+            String from = messageNode.path("from").asText();
+            String to = messageNode.path("to").asText();
+            long timestamp = messageNode.path("at").asLong(System.currentTimeMillis());
+
+            System.out.println("[InboxWs] Parsed event - Type: " + type + ", From: " + from + ", To: " + to);
+
+            if ("chat".equals(type)) {
+                handleChatMessage(messageNode, from, to, timestamp);
+            } else {
+                // Handle other message types (signal, etc.)
+                handleOtherMessage(messageNode, type, from, to, timestamp);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[InboxWs] Error parsing complete message: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Handle chat messages with proper storage and UI updates
+     */
+    private void handleChatMessage(JsonNode messageNode, String from, String to, long timestamp) {
+        try {
+            JsonNode data = messageNode.path("data");
+            String content = data.path("text").asText();
+            String messageId = data.path("id").asText();
+
+            System.out.println("[InboxWs] Received chat message from " + from + " (ID: " + messageId + ")");
+
+            // Apply rate limiting
+            if (!rateLimiter.allowMessage(from)) {
+                System.out.println("[InboxWs] Message from " + from + " was rate limited");
+                return;
+            }
+
+            // Create and store the message
+            ChatMessage chatMessage = new ChatMessage(
+                    messageId, from, to, content, "text", false
+            );
+            chatMessage.setTimestamp(timestamp);
+
+            // Store the message
+            messageStorage.storeMessage(from, chatMessage);
+
+            // Notify UI on JavaFX thread
+            Platform.runLater(() -> {
+                try {
+                    // Update notification count
+                    notificationManager.incrementNotificationCount(from);
+
+                    // Emit event to the event bus for any UI components that need it
+                    Event chatEvent = new Event("chat", from, to, timestamp, data);
+                    AppCtx.BUS.emit(chatEvent);
+
+                } catch (Exception e) {
+                    System.err.println("[InboxWs] Error updating UI: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            });
+
+        } catch (Exception e) {
+            System.err.println("[InboxWs] Error handling chat message: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Handle other message types (signals, etc.)
+     */
+    private void handleOtherMessage(JsonNode messageNode, String type, String from, String to, long timestamp) {
+        try {
+            Event ev = new Event(
+                    type,
+                    from,
+                    to,
+                    timestamp,
+                    messageNode.path("data").isMissingNode() ? messageNode : messageNode.path("data")
+            );
+
+            // Additional handling for events with top-level fields (like signal)
+            if (messageNode.has("kind")) {
+                ev = new Event(
+                        messageNode.path("type").asText("signal"),
+                        from,
+                        to,
+                        timestamp,
+                        messageNode
+                );
+            }
+
+            System.out.println("[InboxWs] Emitting event to AppCtx.BUS: " + ev.type);
+            AppCtx.BUS.emit(ev);
+
+        } catch (Exception e) {
+            System.err.println("[InboxWs] Error handling other message: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -173,10 +269,17 @@ public class InboxWs implements WebSocket.Listener {
 
     @Override
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-        System.out.println("[InboxWs] WebSocket closed. Status: " + statusCode + ", Reason: " + reason);
+        System.out.println("[InboxWs] WebSocket closed. Code: " + statusCode +
+                ", Reason: " + (reason != null ? reason : "none"));
         isConnected = false;
 
-        if (shouldReconnect && statusCode != 1000) { // 1000 is normal closure
+        // Stop cleanup timer
+        if (chunkCleanupTimer != null) {
+            chunkCleanupTimer.cancel();
+            chunkCleanupTimer = null;
+        }
+
+        if (shouldReconnect) {
             scheduleReconnect();
         }
 
@@ -184,10 +287,9 @@ public class InboxWs implements WebSocket.Listener {
     }
 
     private void scheduleReconnect() {
-        if (!shouldReconnect || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                System.err.println("[InboxWs] Max reconnection attempts reached. Giving up.");
-            }
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            System.err.println("[InboxWs] Max reconnection attempts (" + MAX_RECONNECT_ATTEMPTS + ") reached. " +
+                    "Giving up.");
             return;
         }
 
@@ -205,6 +307,34 @@ public class InboxWs implements WebSocket.Listener {
         }, delay, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Start periodic cleanup of chunked messages
+     */
+    private void startChunkCleanupTimer() {
+        if (chunkCleanupTimer != null) {
+            chunkCleanupTimer.cancel();
+        }
+
+        chunkCleanupTimer = new Timer("ChunkCleanupTimer", true);
+        chunkCleanupTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    chunkingService.cleanupOldMessages();
+                } catch (Exception e) {
+                    System.err.println("[InboxWs] Error during chunk cleanup: " + e.getMessage());
+                }
+            }
+        }, 30000, 30000); // Clean up every 30 seconds
+    }
+
+    /**
+     * Manually clean up chunked messages
+     */
+    public void cleanupChunkedMessages() {
+        chunkingService.cleanupOldMessages();
+    }
+
     public boolean isConnected() {
         return isConnected && ws != null && !ws.isOutputClosed();
     }
@@ -212,6 +342,12 @@ public class InboxWs implements WebSocket.Listener {
     public void disconnect() {
         System.out.println("[InboxWs] Disconnecting WebSocket...");
         shouldReconnect = false;
+
+        // Stop cleanup timer
+        if (chunkCleanupTimer != null) {
+            chunkCleanupTimer.cancel();
+            chunkCleanupTimer = null;
+        }
 
         if (ws != null) {
             try {
@@ -266,5 +402,12 @@ public class InboxWs implements WebSocket.Listener {
     public String getConnectionInfo() {
         return String.format("InboxWs[connected=%s, attempts=%d, url=%s, user=%s]",
                 isConnected(), reconnectAttempts, workerUrl, username);
+    }
+
+    /**
+     * Get debug information about chunking service
+     */
+    public void printChunkingDebugInfo() {
+        chunkingService.printBufferStatus();
     }
 }

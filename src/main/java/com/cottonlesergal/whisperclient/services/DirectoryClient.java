@@ -172,58 +172,59 @@ public class DirectoryClient {
             if (chunks.length > 1) {
                 System.out.println("[DirectoryClient] Sending large message in " + chunks.length + " chunks to " + to);
 
-                // Send chunks sequentially with small delays
+                // Send each chunk
                 for (int i = 0; i < chunks.length; i++) {
-                    final String chunk = chunks[i];
-                    final int chunkNum = i + 1;
+                    String chunk = chunks[i];
+                    System.out.println("[DirectoryClient] Sending chunk " + (i + 1) + "/" + chunks.length +
+                            " (size: " + chunk.length() + " bytes)");
 
-                    // Use CompletableFuture for proper sequencing
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            // Small delay between chunks to avoid overwhelming server
-                            if (chunkNum > 1) {
-                                Thread.sleep(100); // 100ms delay between chunks
-                            }
+                    try {
+                        sendSingleMessage(to, chunk);
+                        System.out.println("[DirectoryClient] Sent chunk " + (i + 1) + "/" + chunks.length);
 
-                            sendSingleMessage(to, chunk);
-                            System.out.println("[DirectoryClient] Sent chunk " + chunkNum + "/" + chunks.length);
-
-                        } catch (Exception e) {
-                            System.err.println("[DirectoryClient] Failed to send chunk " + chunkNum + ": " + e.getMessage());
+                        // Small delay between chunks to avoid overwhelming the server
+                        if (i < chunks.length - 1) {
+                            Thread.sleep(50); // 50ms delay
                         }
-                    });
+
+                    } catch (Exception e) {
+                        System.err.println("[DirectoryClient] Failed to send chunk " + (i + 1) + "/" + chunks.length + ": " + e.getMessage());
+                        throw e; // Re-throw to stop sending remaining chunks
+                    }
                 }
+
+                System.out.println("[DirectoryClient] Successfully sent all " + chunks.length + " chunks");
+
             } else {
-                // Regular message - send immediately
+                // Regular message, send normally
                 sendSingleMessage(to, text);
             }
 
         } catch (Exception e) {
-            System.err.println("[DirectoryClient] Error in sendChat: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("[DirectoryClient] Failed to send message: " + e.getMessage());
+            throw new RuntimeException("Failed to send message", e);
         }
     }
 
     /**
      * Send a single message (used for both regular messages and chunks)
      */
-    private void sendSingleMessage(String to, String text) {
-        try {
-            String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/message"))
-                    .header("authorization","Bearer "+Config.APP_TOKEN)
-                    .header("content-type","application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+    private void sendSingleMessage(String to, String text) throws Exception {
+        String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
 
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/send"))
+                .header("authorization", "Bearer " + Config.APP_TOKEN)
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
 
-            if (response.statusCode() != 200) {
-                System.err.println("[DirectoryClient] Failed to send message. Status: " + response.statusCode() +
-                        ", Body: " + response.body());
-            }
-        } catch (Exception e){
-            System.err.println("[DirectoryClient] Error sending message: " + e.getMessage());
-            e.printStackTrace();
+        HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            String errorBody = response.body();
+            System.err.println("[DirectoryClient] Failed to send message. Status: " + response.statusCode() +
+                    ", Body: " + errorBody);
+            throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
         }
     }
 
