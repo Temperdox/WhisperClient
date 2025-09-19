@@ -23,11 +23,23 @@ public class MessageStorageUtility {
     private static final MessageStorageUtility INSTANCE = new MessageStorageUtility();
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    // Storage paths
-    private static final String USER_HOME = System.getProperty("user.home");
+    // Storage paths - with null safety
+    private static final String USER_HOME = getUserHomeDirectory();
     private static final String APP_DATA_DIR = USER_HOME + File.separator + ".whisperclient";
     private static final String MESSAGES_DIR = APP_DATA_DIR + File.separator + "messages";
     private static final String BACKUP_DIR = APP_DATA_DIR + File.separator + "backups";
+
+    private static String getUserHomeDirectory() {
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.trim().isEmpty()) {
+            // Fallback to current directory if user.home is not available
+            userHome = System.getProperty("user.dir");
+            if (userHome == null || userHome.trim().isEmpty()) {
+                userHome = "."; // Last resort fallback
+            }
+        }
+        return userHome;
+    }
 
     public static MessageStorageUtility getInstance() {
         return INSTANCE;
@@ -40,10 +52,30 @@ public class MessageStorageUtility {
 
     private void ensureDirectoriesExist() {
         try {
-            Files.createDirectories(Paths.get(MESSAGES_DIR));
-            Files.createDirectories(Paths.get(BACKUP_DIR));
-        } catch (IOException e) {
+            // Validate paths before attempting to create directories
+            if (MESSAGES_DIR == null || MESSAGES_DIR.trim().isEmpty()) {
+                System.err.println("[MessageStorageUtility] Messages directory path is null or empty");
+                return;
+            }
+
+            if (BACKUP_DIR == null || BACKUP_DIR.trim().isEmpty()) {
+                System.err.println("[MessageStorageUtility] Backup directory path is null or empty");
+                return;
+            }
+
+            Path messagesPath = Paths.get(MESSAGES_DIR);
+            Path backupPath = Paths.get(BACKUP_DIR);
+
+            Files.createDirectories(messagesPath);
+            Files.createDirectories(backupPath);
+
+            System.out.println("[MessageStorageUtility] Created directories:");
+            System.out.println("  Messages: " + messagesPath.toAbsolutePath());
+            System.out.println("  Backups: " + backupPath.toAbsolutePath());
+
+        } catch (Exception e) {
             System.err.println("[MessageStorageUtility] Failed to create directories: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
