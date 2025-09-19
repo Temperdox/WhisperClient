@@ -47,7 +47,7 @@
         <!-- Top Navigation Bar -->
         <top>
             <HBox styleClass="topbar" alignment="CENTER_LEFT" spacing="10">
-                <Label fx:id="lblTitle" text="Direct Messages" styleClass="title"/>
+                <Label fx:id="lblTitle" text="Friends" styleClass="title"/>
                 <Pane HBox.hgrow="ALWAYS"/>
                 <Button text="🎙" styleClass="round"/>
                 <Button text="🎥" styleClass="round"/>
