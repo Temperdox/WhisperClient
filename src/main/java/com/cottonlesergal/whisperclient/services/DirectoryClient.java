@@ -4,79 +4,120 @@ import com.cottonlesergal.whisperclient.models.UserProfile;
 import com.cottonlesergal.whisperclient.models.UserSummary;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.http.*;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import com.cottonlesergal.whisperclient.core.Session;
-import java.util.Optional;
 
 public class DirectoryClient {
     private static final ObjectMapper M = new ObjectMapper();
+    private final HttpClient client = HttpClient.newHttpClient();
 
-    private final HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
-
-    private HttpRequest.Builder base(URI uri) {
-        return HttpRequest.newBuilder(uri)
-                .header("authorization", "Bearer " + Config.APP_TOKEN)
-                .header("content-type", "application/json");
+    public List<UserSummary> friends() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friends"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            JsonNode j = M.readTree(client.send(req, HttpResponse.BodyHandlers.ofString()).body());
+            List<UserSummary> out = new ArrayList<>();
+            for (JsonNode n : j.path("friends")) {
+                String u = n.asText();
+                // fetch display/avatar for friend
+                UserSummary s = lookup(u);
+                out.add(s != null ? s : new UserSummary(u,u,""));
+            }
+            return out;
+        } catch (Exception e){ e.printStackTrace(); return List.of(); }
     }
 
-    public Optional<UserSummary> lookup(String handle) {
+    public List<UserSummary> pending() {
         try {
-            var u = Config.DIR_WORKER + "/lookup?u=" + URLEncoder.encode(handle, StandardCharsets.UTF_8);
-            var res = client.send(base(URI.create(u)).GET().build(), HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() == 404) return Optional.empty();
-            if (res.statusCode() != 200) return Optional.empty();
-            var n = M.readTree(res.body());
-            return Optional.of(new UserSummary(
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/pending"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            JsonNode j = M.readTree(client.send(req, HttpResponse.BodyHandlers.ofString()).body());
+            List<UserSummary> out = new ArrayList<>();
+            for (JsonNode n : j.path("requests")) {
+                String from = n.path("from").asText("");
+                UserSummary s = lookup(from);
+                out.add(s != null ? s : new UserSummary(from, from, ""));
+            }
+            return out;
+        } catch (Exception e){ e.printStackTrace(); return List.of(); }
+    }
+
+    public UserSummary lookup(String u) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(
+                            Config.DIR_WORKER + "/lookup?u=" + URLEncoder.encode(u, StandardCharsets.UTF_8)))
+                    .GET().build();
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) return null;
+            JsonNode n = M.readTree(res.body());
+            return new UserSummary(
                     n.path("username").asText(""),
                     n.path("display").asText(""),
-                    n.path("avatar").asText("")));
-        } catch (Exception e) { e.printStackTrace(); return Optional.empty(); }
+                    n.path("avatar").asText("")
+            );
+        } catch (Exception e){ return null; }
     }
 
-    /** Register/update the current user in the directory */
-    public void registerOrUpdate(UserProfile me) {
-        registerOrUpdate(me.getUsername().toLowerCase(), me.getPubKey(), me.getAvatarUrl());
-    }
-
-    public void registerOrUpdate(String username, String pubKey, String avatarUrl) {
+    public boolean sendFriendRequest(String to) {
         try {
-            var body = M.createObjectNode();
-            body.put("username", username);
-            body.put("pubkey", pubKey);
-            body.put("avatar", avatarUrl == null ? "" : avatarUrl);
-            body.put("provider", "oauth");
-
-            HttpRequest req = base(URI.create(Config.DIR_WORKER + "/register"))
-                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                    .build();
-
-            client.send(req, HttpResponse.BodyHandlers.discarding());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+            String body = "{\"to\":" + M.writeValueAsString(to) + "}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/request"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
     }
 
-    /** Prefix search by username; returns display + avatar for a result list */
+    public boolean acceptFriend(String from) {
+        try {
+            String body = "{\"from\":"+M.writeValueAsString(from)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/accept"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    public void removeFriend(String user) {
+        try {
+            String body = "{\"user\":"+M.writeValueAsString(user)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/remove"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            client.send(req, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception ignored) {}
+    }
+
+    public void sendChat(String to, String text) {
+        try {
+            String body = "{\"to\":"+M.writeValueAsString(to)+",\"text\":"+M.writeValueAsString(text)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/message"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            client.send(req, HttpResponse.BodyHandlers.discarding());
+        } catch (Exception e){ e.printStackTrace(); }
+    }
+
     public List<UserSummary> search(String q) {
         try {
-            String url = Config.DIR_WORKER + "/search?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8);
-            HttpRequest req = base(URI.create(url)).GET().build();
+            String url = Config.DIR_WORKER + "/search?q=" +
+                    URLEncoder.encode(q, StandardCharsets.UTF_8);
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                    .GET().build();
+
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
             if (res.statusCode() != 200) return List.of();
 
-            ArrayNode arr = (ArrayNode) M.readTree(res.body()).path("results");
+            JsonNode arr = M.readTree(res.body()).path("results");
             List<UserSummary> out = new ArrayList<>();
             for (JsonNode n : arr) {
                 out.add(new UserSummary(
@@ -86,62 +127,40 @@ public class DirectoryClient {
                 ));
             }
             return out;
-        } catch (Exception ex) {
-            ex.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
             return List.of();
         }
     }
 
-    public boolean sendFriendRequest(String to) {
+    public boolean registerOrUpdate(UserProfile me) {
         try {
-            var body = M.createObjectNode().put("to", to).toString();
-            var res = client.send(
-                    base(URI.create(Config.DIR_WORKER + "/friend/request"))
-                            .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-                    HttpResponse.BodyHandlers.discarding());
-            return res.statusCode() == 200;
-        } catch (Exception e) { e.printStackTrace(); return false; }
-    }
+            // build request JSON the worker expects
+            var payload = M.createObjectNode()
+                    .put("username", me.getUsername())
+                    .put("pubkey",   me.getPubKey())
+                    .put("display",  (me.getDisplayName()==null || me.getDisplayName().isBlank())
+                            ? me.getUsername() : me.getDisplayName())
+                    .put("provider", me.getProvider() == null ? "oauth" : me.getProvider())
+                    .put("avatar",   me.getAvatarUrl() == null ? "" : me.getAvatarUrl());
 
-    public boolean acceptFriend(String from) {
-        try {
-            var body = M.createObjectNode().put("from", from).toString();
-            var res = client.send(
-                    base(URI.create(Config.DIR_WORKER + "/friend/accept"))
-                            .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-                    HttpResponse.BodyHandlers.discarding());
-            return res.statusCode() == 200;
-        } catch (Exception e) { e.printStackTrace(); return false; }
-    }
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/register"))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("content-type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
+                    .build();
 
-    public List<String> listPending() {
-        try {
-            var res = client.send(
-                    base(URI.create(Config.DIR_WORKER + "/friend/pending")).GET().build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() != 200) return List.of();
-            var arr = (ArrayNode) M.readTree(res.body()).path("requests");
-            List<String> out = new ArrayList<>();
-            for (JsonNode n : arr) out.add(n.path("from").asText(""));
-            return out;
-        } catch (Exception e) { e.printStackTrace(); return List.of(); }
-    }
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            int code = res.statusCode();
 
-    public List<UserSummary> listFriends() {
-        try {
-            var res = client.send(
-                    base(URI.create(Config.DIR_WORKER + "/friends")).GET().build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (res.statusCode() != 200) return List.of();
-            ArrayNode arr = (ArrayNode) M.readTree(res.body()).path("friends");
-            List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : arr) {
-                out.add(new UserSummary(
-                        n.path("username").asText(""),
-                        n.path("display").asText(""),
-                        n.path("avatar").asText("")));
-            }
-            return out;
-        } catch (Exception e) { e.printStackTrace(); return List.of(); }
+            // 200 => ok, 409 => username taken with different pubkey (surface as failure)
+            if (code == 200) return true;
+
+            System.err.println("[DirectoryClient] registerOrUpdate failed: " + code + " body=" + res.body());
+            return false;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
     }
 }
