@@ -138,14 +138,37 @@ public class MainController {
                     String messageText = ev.data.path("text").asText("");
                     String messageId = ev.data.path("id").asText("");
 
-                    System.out.println("[MainController] Message content: " + messageText);
+                    System.out.println("[MainController] Message content length: " + messageText.length());
+
+                    // Check if this is a media message
+                    if (EnhancedMediaService.getInstance().isMediaMessage(messageText)) {
+                        System.out.println("[MainController] Processing received media message");
+
+                        // Extract media message
+                        EnhancedMediaService.MediaMessage mediaMessage =
+                                EnhancedMediaService.getInstance().extractMediaMessage(messageText);
+
+                        if (mediaMessage != null) {
+                            System.out.println("[MainController] Extracted media: " + mediaMessage.getFileName() +
+                                    " (" + EnhancedMediaService.getInstance().formatFileSize(mediaMessage.getFileSize()) + ")");
+                        }
+                    }
 
                     // Store the incoming message
                     ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
                     messageStorage.storeMessage(ev.from, incomingMessage);
 
                     // Show toast notification and increment badge count
-                    notificationManager.showMessageNotification(ev.from, messageText);
+                    String displayText = messageText;
+                    if (EnhancedMediaService.getInstance().isMediaMessage(messageText)) {
+                        EnhancedMediaService.MediaMessage media =
+                                EnhancedMediaService.getInstance().extractMediaMessage(messageText);
+                        if (media != null) {
+                            displayText = "📎 " + media.getFileName();
+                        }
+                    }
+
+                    notificationManager.showMessageNotification(ev.from, displayText);
 
                     // Refresh friends list to show notification badges
                     refreshFriendsUI();
@@ -844,6 +867,67 @@ public class MainController {
             });
         } else {
             System.out.println("No friends to test rate limiting with");
+        }
+    }
+
+    @FXML
+    private void testMediaMessage() {
+        System.out.println("[MainController] Testing media message format...");
+
+        // Create a test media message
+        try {
+            EnhancedMediaService.MediaMessage testMedia = new EnhancedMediaService.MediaMessage();
+            testMedia.setMessageId("test-123");
+            testMedia.setMediaType("image");
+            testMedia.setMimeType("image/png");
+            testMedia.setFileName("test_image.png");
+            testMedia.setFileSize(1024 * 1024); // 1MB
+            testMedia.setBase64Data("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="); // 1x1 pixel PNG
+            testMedia.setChecksum("test-checksum");
+            testMedia.setTimestamp(System.currentTimeMillis());
+
+            String mediaMessageText = EnhancedMediaService.getInstance().createMediaMessageText(testMedia);
+            System.out.println("Created media message: " + mediaMessageText.substring(0, Math.min(200, mediaMessageText.length())) + "...");
+
+            // Test extraction
+            EnhancedMediaService.MediaMessage extracted = EnhancedMediaService.getInstance().extractMediaMessage(mediaMessageText);
+            if (extracted != null) {
+                System.out.println("✓ Successfully extracted media message:");
+                System.out.println("  File: " + extracted.getFileName());
+                System.out.println("  Size: " + EnhancedMediaService.getInstance().formatFileSize(extracted.getFileSize()));
+                System.out.println("  Type: " + extracted.getMediaType());
+            } else {
+                System.out.println("✗ Failed to extract media message");
+            }
+
+            // Test sending to self
+            if (Session.me != null) {
+                directory.sendChat(Session.me.getUsername(), mediaMessageText);
+                System.out.println("Sent test media message to self");
+            }
+
+        } catch (Exception e) {
+            System.err.println("Media test failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    @FXML
+    private void checkWebSocketHealth() {
+        System.out.println("[MainController] Checking WebSocket health...");
+
+        if (inbox != null) {
+            System.out.println("WebSocket status: " + inbox.getConnectionInfo());
+
+            // Send a simple ping
+            inbox.ping();
+
+            // Send a test JSON message
+            if (Session.me != null) {
+                directory.sendChat(Session.me.getUsername(), "WebSocket health check: " + System.currentTimeMillis());
+            }
+        } else {
+            System.out.println("WebSocket is null - not connected");
         }
     }
 

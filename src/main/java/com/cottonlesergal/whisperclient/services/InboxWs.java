@@ -88,11 +88,20 @@ public class InboxWs implements WebSocket.Listener {
     public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
         try {
             String message = data.toString();
-            System.out.println("[InboxWs] Received message: " + message);
+            System.out.println("[InboxWs] Received message: " +
+                    (message.length() > 200 ? message.substring(0, 200) + "... (truncated)" : message));
 
             // Handle ping response
             if ("pong".equals(message.trim())) {
                 System.out.println("[InboxWs] Received pong - connection is alive");
+                webSocket.request(1);
+                return null;
+            }
+
+            // Check if this looks like raw base64 data (corrupted message)
+            if (!message.trim().startsWith("{") && !message.trim().startsWith("[")) {
+                System.err.println("[InboxWs] Received malformed message (not JSON): " +
+                        message.substring(0, Math.min(100, message.length())) + "...");
                 webSocket.request(1);
                 return null;
             }
@@ -130,7 +139,10 @@ public class InboxWs implements WebSocket.Listener {
 
         } catch (Exception e) {
             System.err.println("[InboxWs] Error processing message: " + e.getMessage());
-            e.printStackTrace();
+            // Don't print the full stack trace for JSON errors, just log the issue
+            if (!(e instanceof com.fasterxml.jackson.core.JsonParseException)) {
+                e.printStackTrace();
+            }
         }
 
         webSocket.request(1);

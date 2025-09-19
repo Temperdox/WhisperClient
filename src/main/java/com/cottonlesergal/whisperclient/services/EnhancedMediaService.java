@@ -143,7 +143,13 @@ public class EnhancedMediaService {
 
                 String messageId = java.util.UUID.randomUUID().toString();
 
-                return new MediaMessage(messageId, mediaType, mimeType, fileName, fileSize, base64Data, checksum);
+                // Create MediaMessage with proper file size
+                MediaMessage mediaMessage = new MediaMessage(messageId, mediaType, mimeType, fileName, fileSize, base64Data, checksum);
+
+                System.out.println("[EnhancedMediaService] Created MediaMessage: " + fileName +
+                        " (" + formatFileSize(fileSize) + ") - " + mediaType);
+
+                return mediaMessage;
 
             } catch (Exception e) {
                 throw new RuntimeException("Failed to process file: " + e.getMessage(), e);
@@ -309,7 +315,13 @@ public class EnhancedMediaService {
      * Create a special message format for media transmission
      */
     public String createMediaMessageText(MediaMessage mediaMessage) {
-        return "[MEDIA:" + mediaMessage.toJson() + "]";
+        try {
+            String json = mediaMessage.toJson();
+            return "[MEDIA:" + json + "]";
+        } catch (Exception e) {
+            System.err.println("Failed to create media message text: " + e.getMessage());
+            return "[MEDIA_ERROR]";
+        }
     }
 
     /**
@@ -327,7 +339,14 @@ public class EnhancedMediaService {
 
         try {
             String jsonData = messageText.substring(7, messageText.length() - 1); // Remove [MEDIA: and ]
-            return MediaMessage.fromJson(jsonData);
+            MediaMessage mediaMessage = MediaMessage.fromJson(jsonData);
+
+            if (mediaMessage != null) {
+                System.out.println("[EnhancedMediaService] Extracted MediaMessage: " +
+                        mediaMessage.getFileName() + " (" + formatFileSize(mediaMessage.getFileSize()) + ")");
+            }
+
+            return mediaMessage;
         } catch (Exception e) {
             System.err.println("Failed to extract media message: " + e.getMessage());
             return null;

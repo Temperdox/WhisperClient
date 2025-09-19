@@ -640,6 +640,7 @@ public class ChatController {
         ProgressBar progressBar = new ProgressBar();
         progressBar.setPrefWidth(280);
         progressBar.setProgress(-1); // Indeterminate
+        progressBar.getStyleClass().add("upload-progress");
 
         Label statusLabel = new Label("Loading image...");
         statusLabel.setStyle("-fx-text-fill: #87898c; -fx-font-size: 11px;");
@@ -675,7 +676,9 @@ public class ChatController {
                     VBox imageContainer = new VBox(4);
                     imageContainer.getChildren().add(imageView);
 
-                    Label filename = new Label(mediaMessage.getFileName());
+                    // Show filename and actual file size
+                    Label filename = new Label(mediaMessage.getFileName() +
+                            " (" + mediaService.formatFileSize(mediaMessage.getFileSize()) + ")");
                     filename.getStyleClass().add("media-filename");
                     filename.setStyle("-fx-text-fill: #b5bac1; -fx-font-size: 12px;");
                     imageContainer.getChildren().add(filename);
@@ -686,7 +689,8 @@ public class ChatController {
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     container.getChildren().removeAll(progressBar, statusLabel);
-                    Label errorLabel = new Label("Failed to load image: " + mediaMessage.getFileName());
+                    Label errorLabel = new Label("Failed to load image: " + mediaMessage.getFileName() +
+                            " (Size: " + mediaService.formatFileSize(mediaMessage.getFileSize()) + ")");
                     errorLabel.setStyle("-fx-text-fill: #f04747; -fx-font-size: 12px;");
                     container.getChildren().add(errorLabel);
                 });
