@@ -233,12 +233,17 @@ public class ChatController {
         if (text.isEmpty() && pendingUploads.isEmpty()) return;
 
         if (!pendingUploads.isEmpty()) {
-            // Send media files - DON'T clear text field until after sending
-            sendPendingMedia(text);
+            // Send media files - prevent double sending by clearing list immediately
+            List<MediaPreview> toSend = new ArrayList<>(pendingUploads);
+            pendingUploads.clear(); // Clear immediately to prevent double-sends
+            updatePreviewVisibility();
+
+            sendMediaBatch(toSend, text);
+            txtMessage.clear();
         } else if (!text.isEmpty()) {
             // Send text message
             sendTextMessage(text);
-            txtMessage.clear(); // Only clear for text messages
+            txtMessage.clear();
         }
     }
 
@@ -406,10 +411,9 @@ public class ChatController {
                 }
             });
 
-            // Set up send callback (individual file send)
+            // No individual send callback - only use Enter key to send
             preview.setOnSend(() -> {
-                // Send just this preview, then remove it from the list
-                sendSingleMediaFile(preview, null);
+                System.out.println("[ChatController] Individual send disabled - use Enter key to send files");
             });
 
             Platform.runLater(() -> {
@@ -482,35 +486,41 @@ public class ChatController {
         }).start();
     }
 
-    private void sendPendingMedia(String caption) {
-        sendPendingMedia(new ArrayList<>(pendingUploads), caption != null ? caption : "");
-    }
-
-    private void sendPendingMedia(List<MediaPreview> previewsToSend, String caption) {
+    // Batch sending for Enter key (prevents duplicates)
+    private void sendMediaBatch(List<MediaPreview> previewsToSend, String caption) {
         if (previewsToSend.isEmpty()) return;
+
+        System.out.println("[ChatController] Sending batch of " + previewsToSend.size() + " media files");
 
         for (int i = 0; i < previewsToSend.size(); i++) {
             MediaPreview preview = previewsToSend.get(i);
             // Only add caption to first file
             String fileCaption = (i == 0 && caption != null && !caption.isEmpty()) ? caption : null;
-            sendMediaFile(preview, fileCaption);
-        }
 
-        // Clear text field after starting send
-        if (caption != null && !caption.isEmpty()) {
-            Platform.runLater(() -> txtMessage.clear());
+            // Remove from UI immediately to prevent re-sending
+            Platform.runLater(() -> {
+                previewContainer.getChildren().remove(preview.getPreviewNode());
+            });
+
+            sendSingleMediaFile(preview, fileCaption);
         }
     }
 
     private void sendSingleMediaFile(MediaPreview preview, String caption) {
         if (friend == null) return;
 
+        // Check if already sending to prevent duplicates
+        if (preview.isProcessing()) {
+            System.out.println("[ChatController] Skipping duplicate send for: " + preview.getFileName());
+            return;
+        }
+
         previewService.showProgress(preview, "Sending...");
 
         // Use HTTP POST to send media
         httpMediaService.sendMediaAsync(preview.getFile(), friend.getUsername(), caption)
                 .thenRun(() -> {
-                    System.out.println("[ChatController] Single media file sent successfully via HTTP");
+                    System.out.println("[ChatController] Media file sent successfully: " + preview.getFileName());
 
                     Platform.runLater(() -> {
                         try {
@@ -531,11 +541,8 @@ public class ChatController {
                             addMessageBubble(mediaMessage);
                             scrollToBottom();
 
-                            // Remove this specific preview
-                            pendingUploads.remove(preview);
-                            previewContainer.getChildren().remove(preview.getPreviewNode());
+                            // Clean up temp file
                             previewService.cleanupTempFile(preview);
-                            updatePreviewVisibility();
 
                         } catch (Exception e) {
                             System.err.println("[ChatController] Error displaying sent media: " + e.getMessage());
@@ -549,49 +556,20 @@ public class ChatController {
                     });
                 })
                 .exceptionally(throwable -> {
-                    System.err.println("[ChatController] Failed to send single media file: " + throwable.getMessage());
+                    System.err.println("[ChatController] Failed to send media file: " + throwable.getMessage());
                     Platform.runLater(() -> {
                         previewService.hideProgress(preview);
                         showError("Send Failed", "Could not send " + preview.getFileName() + ": " + throwable.getMessage());
+
+                        // Re-add to UI on failure
+                        if (!pendingUploads.contains(preview)) {
+                            pendingUploads.add(preview);
+                            previewContainer.getChildren().add(preview.getPreviewNode());
+                            updatePreviewVisibility();
+                        }
                     });
                     return null;
                 });
-    }
-
-    private void sendMediaFile(MediaPreview preview, String caption) {
-        // This method is now only used for batch sending (Enter key with multiple previews)
-        sendSingleMediaFile(preview, caption);
-    }
-
-    // Helper method to encode file to base64 for sender's display
-    private String encodeFileToBase64(File file) {
-        try {
-            byte[] fileBytes = Files.readAllBytes(file.toPath());
-            return Base64.getEncoder().encodeToString(fileBytes);
-        } catch (Exception e) {
-            System.err.println("[ChatController] Failed to encode file for display: " + e.getMessage());
-            return "";
-        }
-    }
-
-    // Helper method to guess MIME type
-    private String guessMimeType(String fileName) {
-        String extension = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
-
-        switch (extension) {
-            case "png": return "image/png";
-            case "jpg": case "jpeg": return "image/jpeg";
-            case "gif": return "image/gif";
-            case "bmp": return "image/bmp";
-            case "webp": return "image/webp";
-            case "mp4": return "video/mp4";
-            case "webm": return "video/webm";
-            case "mov": return "video/quicktime";
-            case "mp3": return "audio/mpeg";
-            case "wav": return "audio/wav";
-            case "ogg": return "audio/ogg";
-            default: return "application/octet-stream";
-        }
     }
 
     // ============== MESSAGE DISPLAY ==============
@@ -1103,6 +1081,37 @@ public class ChatController {
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+
+    // Helper method to encode file to base64 for sender's display
+    private String encodeFileToBase64(File file) {
+        try {
+            byte[] fileBytes = Files.readAllBytes(file.toPath());
+            return Base64.getEncoder().encodeToString(fileBytes);
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to encode file for display: " + e.getMessage());
+            return "";
+        }
+    }
+
+    // Helper method to guess MIME type
+    private String guessMimeType(String fileName) {
+        String extension = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+
+        switch (extension) {
+            case "png": return "image/png";
+            case "jpg": case "jpeg": return "image/jpeg";
+            case "gif": return "image/gif";
+            case "bmp": return "image/bmp";
+            case "webp": return "image/webp";
+            case "mp4": return "video/mp4";
+            case "webm": return "video/webm";
+            case "mov": return "video/quicktime";
+            case "mp3": return "audio/mpeg";
+            case "wav": return "audio/wav";
+            case "ogg": return "audio/ogg";
+            default: return "application/octet-stream";
+        }
     }
 
     // ============== PUBLIC API ==============

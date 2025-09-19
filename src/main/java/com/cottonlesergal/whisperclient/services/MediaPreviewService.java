@@ -7,6 +7,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
@@ -345,16 +346,12 @@ public class MediaPreviewService {
             }
         });
 
-        Button sendButton = new Button("Send");
+        // Disable the individual send button - use Enter/main Send button instead
+        Button sendButton = new Button("Ready to Send");
         sendButton.getStyleClass().add("preview-send-button");
-        sendButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;");
-        sendButton.setOnMouseEntered(e -> sendButton.setStyle("-fx-background-color: #4752c4; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;"));
-        sendButton.setOnMouseExited(e -> sendButton.setStyle("-fx-background-color: #5865f2; -fx-text-fill: white; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;"));
-        sendButton.setOnAction(e -> {
-            if (preview.onSend != null && !preview.isProcessing()) {
-                preview.onSend.run();
-            }
-        });
+        sendButton.setStyle("-fx-background-color: #57f287; -fx-text-fill: black; -fx-background-radius: 4; -fx-padding: 4 8; -fx-font-size: 11px;");
+        sendButton.setDisable(true); // Disabled - use Enter key to send
+        sendButton.setTooltip(new Tooltip("Press Enter to send this file"));
 
         actions.getChildren().addAll(removeButton, sendButton);
         return actions;
