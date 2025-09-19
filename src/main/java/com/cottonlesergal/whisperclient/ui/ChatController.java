@@ -4,8 +4,10 @@ import com.cottonlesergal.whisperclient.core.AppCtx;
 import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.models.Friend;
 import com.cottonlesergal.whisperclient.services.DirectoryClient;
+import com.cottonlesergal.whisperclient.services.MediaMessageService;
 import com.cottonlesergal.whisperclient.services.MessageStorageService;
 import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
+import com.cottonlesergal.whisperclient.ui.components.EnhancedMessageComponents;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.animation.Animation;
 import javafx.animation.FadeTransition;
@@ -18,10 +20,16 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.DragEvent;
+import javafx.scene.input.Dragboard;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.shape.Circle;
+import javafx.stage.FileChooser;
+import javafx.stage.Stage;
 import javafx.util.Duration;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -38,9 +46,11 @@ public class ChatController {
     @FXML private ScrollPane scrollPane;
     @FXML private VBox messagesBox;
     @FXML private TextField txtMessage;
+    @FXML private Button btnAttach; // File attachment button
 
     private final DirectoryClient directory = new DirectoryClient();
     private final MessageStorageService storage = MessageStorageService.getInstance();
+    private final MediaMessageService mediaService = MediaMessageService.getInstance();
     private final ObjectMapper mapper = new ObjectMapper();
 
     private Friend friend;
@@ -58,8 +68,9 @@ public class ChatController {
         setupScrollPane();
         setupLoadingIndicator();
         setupContextMenus();
+        setupDragAndDrop();
 
-        System.out.println("[ChatController] Initialized");
+        System.out.println("[ChatController] Initialized with media support");
     }
 
     private void setupContextMenus() {
@@ -143,6 +154,88 @@ public class ChatController {
         shimmer.play();
 
         return shimmerBar;
+    }
+
+    private void setupDragAndDrop() {
+        // Enable drag and drop for the entire chat area
+        messagesBox.setOnDragOver(this::handleDragOver);
+        messagesBox.setOnDragDropped(this::handleDragDropped);
+
+        // Also enable for scroll pane
+        scrollPane.setOnDragOver(this::handleDragOver);
+        scrollPane.setOnDragDropped(this::handleDragDropped);
+    }
+
+    private void handleDragOver(DragEvent event) {
+        if (event.getGestureSource() != messagesBox && event.getDragboard().hasFiles()) {
+            event.acceptTransferModes(TransferMode.COPY);
+        }
+        event.consume();
+    }
+
+    private void handleDragDropped(DragEvent event) {
+        Dragboard db = event.getDragboard();
+        boolean success = false;
+
+        if (db.hasFiles()) {
+            List<File> files = db.getFiles();
+            for (File file : files) {
+                sendFileMessage(file);
+            }
+            success = true;
+        }
+
+        event.setDropCompleted(success);
+        event.consume();
+    }
+
+    @FXML
+    private void onAttachFile() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select File to Send");
+
+        // Add file type filters
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("All Files", "*.*"),
+                new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"),
+                new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv"),
+                new FileChooser.ExtensionFilter("Audio", "*.mp3", "*.wav", "*.ogg", "*.m4a"),
+                new FileChooser.ExtensionFilter("Documents", "*.pdf", "*.doc", "*.docx", "*.txt", "*.rtf")
+        );
+
+        Stage stage = (Stage) txtMessage.getScene().getWindow();
+        File selectedFile = fileChooser.showOpenDialog(stage);
+
+        if (selectedFile != null) {
+            sendFileMessage(selectedFile);
+        }
+    }
+
+    private void sendFileMessage(File file) {
+        if (friend == null) return;
+
+        try {
+            MediaMessageService.EnhancedMessage enhancedMessage = mediaService.processFileUpload(file);
+
+            // For now, we'll convert to a regular text message with file info
+            // In a full implementation, you'd send the file data through your messaging protocol
+            String fileMessage = "[FILE] " + file.getName() + " (" +
+                    mediaService.formatFileSize(file.length()) + ")";
+
+            directory.sendChat(friend.getUsername(), fileMessage);
+
+            // Store and display locally
+            ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), fileMessage);
+            storage.storeMessage(friend.getUsername(), outgoing);
+
+            // Create enhanced message bubble
+            addEnhancedMessageBubble(enhancedMessage, true);
+            scrollToBottom();
+
+        } catch (Exception e) {
+            showError("File Error", "Failed to send file: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     public void bindFriend(Friend f) {
@@ -350,18 +443,126 @@ public class ChatController {
 
         System.out.println("[ChatController] Sending message to: " + friend.getUsername() + " - " + text);
 
-        // Send via network
-        directory.sendChat(friend.getUsername(), text);
+        // Process text for link embeds
+        mediaService.processTextMessage(text).thenAccept(enhancedMessage -> {
+            Platform.runLater(() -> {
+                // Send via network
+                directory.sendChat(friend.getUsername(), text);
 
-        // Store outgoing message
-        ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
-        storage.storeMessage(friend.getUsername(), outgoing);
+                // Store outgoing message
+                ChatMessage outgoing = ChatMessage.fromOutgoing(friend.getUsername(), text);
+                storage.storeMessage(friend.getUsername(), outgoing);
 
-        // Add to UI
-        addMessageBubble(outgoing);
-        scrollToBottom();
+                // Add to UI with potential embeds
+                addEnhancedMessageBubble(enhancedMessage, true);
+                scrollToBottom();
+            });
+        });
 
         txtMessage.clear();
+    }
+
+    /**
+     * Add an enhanced message bubble with media/embed support
+     */
+    private void addEnhancedMessageBubble(MediaMessageService.EnhancedMessage enhancedMessage, boolean isFromMe) {
+        VBox messageContainer = new VBox(8);
+        messageContainer.getStyleClass().add("enhanced-message-container");
+        messageContainer.setPadding(new Insets(4, 16, 4, 16));
+
+        HBox messageRow = new HBox(12);
+        messageRow.getStyleClass().add("message-row");
+        messageRow.setAlignment(Pos.TOP_LEFT);
+
+        // Create avatar (32x32 circle)
+        ImageView avatar = new ImageView();
+        avatar.setFitWidth(32);
+        avatar.setFitHeight(32);
+
+        if (isFromMe && Session.me != null) {
+            avatar.setImage(AvatarCache.get(Session.me.getAvatarUrl(), 32));
+        } else {
+            String avatarUrl = friend != null ? friend.getAvatar() : "";
+            avatar.setImage(AvatarCache.get(avatarUrl, 32));
+        }
+
+        Circle clip = new Circle(16, 16, 16);
+        avatar.setClip(clip);
+
+        // Message content area
+        VBox contentArea = new VBox(8);
+        contentArea.setAlignment(Pos.TOP_LEFT);
+        contentArea.setMaxWidth(600);
+
+        // Header with name and timestamp
+        HBox header = new HBox(8);
+        header.setAlignment(Pos.CENTER_LEFT);
+
+        Label nameLabel = new Label();
+        nameLabel.getStyleClass().add("message-author");
+
+        if (isFromMe && Session.me != null) {
+            nameLabel.setText(Session.me.getDisplayName());
+        } else {
+            nameLabel.setText(friend != null ? friend.getDisplayName() : "Unknown");
+        }
+
+        LocalDateTime dateTime = LocalDateTime.now();
+        String timeStr = dateTime.format(DateTimeFormatter.ofPattern("h:mm a"));
+        Label timestampLabel = new Label(timeStr);
+        timestampLabel.getStyleClass().add("message-timestamp");
+
+        header.getChildren().addAll(nameLabel, timestampLabel);
+        contentArea.getChildren().add(header);
+
+        // Text content (if any)
+        if (enhancedMessage.getText() != null && !enhancedMessage.getText().trim().isEmpty()) {
+            Label textContent = new Label(enhancedMessage.getText());
+            textContent.setWrapText(true);
+            textContent.setMaxWidth(580);
+            textContent.getStyleClass().add("message-content");
+            contentArea.getChildren().add(textContent);
+        }
+
+        // Media/embed content based on message type
+        switch (enhancedMessage.getType()) {
+            case IMAGE:
+                contentArea.getChildren().add(EnhancedMessageComponents.createImageMessage(enhancedMessage));
+                break;
+            case VIDEO:
+            case AUDIO:
+            case FILE:
+                contentArea.getChildren().add(EnhancedMessageComponents.createFileMessage(enhancedMessage));
+                break;
+            case LINK_EMBED:
+                if (enhancedMessage.getLinkEmbed() != null) {
+                    Node embedComponent = createEmbedComponent(enhancedMessage.getLinkEmbed());
+                    if (embedComponent != null) {
+                        contentArea.getChildren().add(embedComponent);
+                    }
+                }
+                break;
+        }
+
+        messageRow.getChildren().addAll(avatar, contentArea);
+        messageContainer.getChildren().add(messageRow);
+        messagesBox.getChildren().add(messageContainer);
+    }
+
+    private Node createEmbedComponent(MediaMessageService.LinkEmbed embed) {
+        switch (embed.getEmbedType()) {
+            case YOUTUBE:
+                return EnhancedMessageComponents.createYouTubeEmbed(embed);
+            case TWITTER:
+                return EnhancedMessageComponents.createTwitterEmbed(embed);
+            case BLUESKY:
+                return EnhancedMessageComponents.createBlueSkyEmbed(embed);
+            case AMAZON:
+                return EnhancedMessageComponents.createAmazonEmbed(embed);
+            case GENERIC:
+            default:
+                return EnhancedMessageComponents.createGenericEmbed(embed);
+        }
     }
 
     private Node createMessageBubble(ChatMessage message) {
@@ -569,8 +770,19 @@ public class ChatController {
     public void addMessageBubble(ChatMessage message) {
         System.out.println("[ChatController] Adding message bubble from: " + message.getFrom() +
                 " (isFromMe: " + message.isFromMe() + ")");
-        Node bubble = createMessageBubble(message);
-        messagesBox.getChildren().add(bubble);
+
+        // Check if the message contains links and create enhanced version
+        if (message.getContent().contains("http")) {
+            mediaService.processTextMessage(message.getContent()).thenAccept(enhancedMessage -> {
+                Platform.runLater(() -> {
+                    addEnhancedMessageBubble(enhancedMessage, message.isFromMe());
+                });
+            });
+        } else {
+            // Regular message bubble
+            Node bubble = createMessageBubble(message);
+            messagesBox.getChildren().add(bubble);
+        }
     }
 
     public void scrollToBottom() {

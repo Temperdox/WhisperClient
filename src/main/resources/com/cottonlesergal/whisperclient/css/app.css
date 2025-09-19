@@ -157,11 +157,215 @@ Label.close-icon:hover {
     -fx-background-color: #f04747;
 }
 
-.discord-toast-app-icon {
-    -fx-font-size: 16px;
-    -fx-pref-width: 24;
-    -fx-pref-height: 24;
+/* ===== ENHANCED MESSAGE COMPONENTS ===== */
+.enhanced-message-container {
+    -fx-spacing: 8;
+}
+
+/* Image Messages */
+.image-message {
+    -fx-spacing: 4;
+    -fx-padding: 8;
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.clickable-image {
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 2);
+}
+
+.clickable-image:hover {
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 6, 0, 0, 3);
+}
+
+.image-filename {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 12px;
+    -fx-font-style: italic;
+}
+
+/* File Messages */
+.file-message {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.file-icon {
+    -fx-font-size: 32px;
+    -fx-pref-width: 48;
     -fx-alignment: center;
+}
+
+.file-name {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+
+.file-size {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 12px;
+}
+
+.file-open-button {
+    -fx-background-color: #5865f2;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 6 12;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.file-open-button:hover {
+    -fx-background-color: #4752c4;
+}
+
+/* YouTube Embeds */
+.youtube-embed {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 4, 0, 0, 2);
+}
+
+.youtube-play-button {
+    -fx-background-color: rgba(0,0,0,0.8);
+    -fx-text-fill: white;
+    -fx-background-radius: 50%;
+    -fx-font-size: 24px;
+    -fx-padding: 12;
+    -fx-cursor: hand;
+}
+
+.youtube-title {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+
+.youtube-site {
+    -fx-text-fill: #ff0000;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+
+/* Twitter Embeds */
+.twitter-embed {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #1da1f2;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.twitter-icon {
+    -fx-font-size: 16px;
+    -fx-text-fill: #1da1f2;
+}
+
+.twitter-site {
+    -fx-text-fill: #1da1f2;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+
+.twitter-content {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 13px;
+}
+
+/* Bluesky Embeds */
+.bluesky-embed {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #00bcd4;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.bluesky-site {
+    -fx-text-fill: #00bcd4;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+
+.bluesky-content {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 13px;
+}
+
+/* Amazon Embeds */
+.amazon-embed {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #ff9900;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.amazon-site {
+    -fx-text-fill: #ff9900;
+    -fx-font-size: 12px;
+    -fx-font-weight: 600;
+}
+
+.amazon-title {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+
+/* Generic Embeds */
+.generic-embed {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 8;
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.embed-title {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 14px;
+    -fx-font-weight: 600;
+}
+
+.embed-description {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 13px;
+}
+
+.embed-site {
+    -fx-text-fill: #72767d;
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+    -fx-text-transform: uppercase;
+}
+
+/* Clickable elements */
+.clickable {
+    -fx-cursor: hand;
+}
+
+.clickable:hover {
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 6, 0, 0, 3);
+}
+
+/* Error labels */
+.error-label {
+    -fx-text-fill: #f04747;
+    -fx-font-size: 12px;
+    -fx-font-style: italic;
 }
 
 /* ===== TOP BAR ===== */
