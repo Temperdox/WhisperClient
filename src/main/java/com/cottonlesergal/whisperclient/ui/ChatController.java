@@ -408,8 +408,8 @@ public class ChatController {
 
             // Set up send callback (individual file send)
             preview.setOnSend(() -> {
-                List<MediaPreview> singlePreview = List.of(preview);
-                sendPendingMedia(singlePreview, null);
+                // Send just this preview, then remove it from the list
+                sendSingleMediaFile(preview, null);
             });
 
             Platform.runLater(() -> {
@@ -502,20 +502,18 @@ public class ChatController {
         }
     }
 
-    private void sendMediaFile(MediaPreview preview, String caption) {
+    private void sendSingleMediaFile(MediaPreview preview, String caption) {
         if (friend == null) return;
 
-        previewService.showProgress(preview, "Preparing...");
+        previewService.showProgress(preview, "Sending...");
 
         // Use HTTP POST to send media
         httpMediaService.sendMediaAsync(preview.getFile(), friend.getUsername(), caption)
                 .thenRun(() -> {
-                    System.out.println("[ChatController] Media sent successfully via HTTP");
+                    System.out.println("[ChatController] Single media file sent successfully via HTTP");
 
                     Platform.runLater(() -> {
                         try {
-                            previewService.updateProgress(preview, "Sent ✓");
-
                             // Create inline media message for sender to see their own image
                             String base64Data = encodeFileToBase64(preview.getFile());
                             String mimeType = guessMimeType(preview.getFileName());
@@ -533,20 +531,11 @@ public class ChatController {
                             addMessageBubble(mediaMessage);
                             scrollToBottom();
 
-                            // Remove preview after successful send (with delay)
-                            new Thread(() -> {
-                                try {
-                                    Thread.sleep(2000); // Show "Sent ✓" for 2 seconds
-                                    Platform.runLater(() -> {
-                                        pendingUploads.remove(preview);
-                                        previewContainer.getChildren().remove(preview.getPreviewNode());
-                                        previewService.cleanupTempFile(preview);
-                                        updatePreviewVisibility();
-                                    });
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                            }).start();
+                            // Remove this specific preview
+                            pendingUploads.remove(preview);
+                            previewContainer.getChildren().remove(preview.getPreviewNode());
+                            previewService.cleanupTempFile(preview);
+                            updatePreviewVisibility();
 
                         } catch (Exception e) {
                             System.err.println("[ChatController] Error displaying sent media: " + e.getMessage());
@@ -560,14 +549,18 @@ public class ChatController {
                     });
                 })
                 .exceptionally(throwable -> {
-                    System.err.println("[ChatController] Failed to send media via HTTP: " + throwable.getMessage());
+                    System.err.println("[ChatController] Failed to send single media file: " + throwable.getMessage());
                     Platform.runLater(() -> {
                         previewService.hideProgress(preview);
                         showError("Send Failed", "Could not send " + preview.getFileName() + ": " + throwable.getMessage());
-                        // Keep preview visible on failure so user can retry
                     });
                     return null;
                 });
+    }
+
+    private void sendMediaFile(MediaPreview preview, String caption) {
+        // This method is now only used for batch sending (Enter key with multiple previews)
+        sendSingleMediaFile(preview, caption);
     }
 
     // Helper method to encode file to base64 for sender's display
