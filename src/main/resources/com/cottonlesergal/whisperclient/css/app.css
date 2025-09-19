@@ -12,8 +12,8 @@
     -fx-background-color: #202225;
     -fx-border-color: #040405;
     -fx-border-width: 0 0 1 0;
-    -fx-min-height: 32;
-    -fx-max-height: 32;
+    -fx-min-height: 40;
+    -fx-max-height: 40;
 }
 
 .window-title {
@@ -22,18 +22,24 @@
     -fx-font-weight: 500;
 }
 
-/* Window Icons (Labels with hover effects) - NUCLEAR OPTION */
+/* Window Icons (Labels with hover effects) - Enhanced sizing */
 Label.window-icon {
     -fx-text-fill: #96989d !important;
-    -fx-font-size: 14px !important;
+    -fx-font-size: 12px !important;
     -fx-font-weight: normal !important;
     -fx-alignment: CENTER !important;
     -fx-cursor: hand !important;
     -fx-background-color: transparent !important;
     -fx-border-color: transparent !important;
-    -fx-padding: 0 !important;
+    -fx-padding: 10 0 10 0 !important;
     -fx-background-insets: 0 !important;
     -fx-text-alignment: CENTER !important;
+    -fx-min-width: 46 !important;
+    -fx-pref-width: 46 !important;
+    -fx-max-width: 46 !important;
+    -fx-min-height: 40 !important;
+    -fx-pref-height: 40 !important;
+    -fx-max-height: 40 !important;
 }
 
 Label.window-icon:hover {
@@ -43,15 +49,21 @@ Label.window-icon:hover {
 
 Label.close-icon {
     -fx-text-fill: #96989d !important;
-    -fx-font-size: 14px !important;
+    -fx-font-size: 12px !important;
     -fx-font-weight: normal !important;
     -fx-alignment: CENTER !important;
     -fx-cursor: hand !important;
     -fx-background-color: transparent !important;
     -fx-border-color: transparent !important;
-    -fx-padding: 0 !important;
+    -fx-padding: 10 0 10 0 !important;
     -fx-background-insets: 0 !important;
     -fx-text-alignment: CENTER !important;
+    -fx-min-width: 46 !important;
+    -fx-pref-width: 46 !important;
+    -fx-max-width: 46 !important;
+    -fx-min-height: 40 !important;
+    -fx-pref-height: 40 !important;
+    -fx-max-height: 40 !important;
 }
 
 Label.close-icon:hover {
@@ -68,66 +80,88 @@ Label.close-icon:hover {
     -fx-font-weight: bold;
     -fx-alignment: center;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 2, 0, 0, 1);
-    -fx-min-width: 20;
-    -fx-min-height: 20;
-    -fx-pref-width: 20;
-    -fx-pref-height: 20;
-    -fx-max-width: 28;
-    -fx-max-height: 20;
+    -fx-min-width: 18;
+    -fx-min-height: 18;
+    -fx-pref-height: 18;
+    -fx-max-height: 18;
+    -fx-padding: 2 6 2 6; /* Top Right Bottom Left - gives horizontal padding */
 }
 
-/* ===== TOAST NOTIFICATIONS ===== */
+.notification-badge-single {
+    -fx-min-width: 18;
+    -fx-pref-width: 18;
+    -fx-padding: 2 2 2 2;
+}
+
+.notification-badge-double {
+    -fx-min-width: 22;
+    -fx-padding: 2 4 2 4;
+}
+
+.notification-badge-triple {
+    -fx-min-width: 28;
+    -fx-padding: 2 6 2 6;
+}
+
+/* ===== TOAST NOTIFICATIONS (Discord Style) ===== */
 .toast-container {
     -fx-spacing: 8;
     -fx-alignment: bottom-right;
     -fx-padding: 20;
 }
 
-.toast {
+.discord-toast {
+    -fx-background-color: #2b2d31;
     -fx-background-radius: 8;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 8, 0, 0, 2);
+    -fx-border-color: #40444b;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.4), 12, 0, 0, 4);
     -fx-padding: 12 16;
     -fx-spacing: 12;
     -fx-alignment: center-left;
-    -fx-max-width: 280;
-    -fx-pref-width: 280;
+    -fx-max-width: 300;
+    -fx-pref-width: 300;
 }
 
-.toast-message {
-    -fx-background-color: #5865f2;
+.discord-toast-app-name {
+    -fx-text-fill: #ffffff;
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+    -fx-font-family: "Whitney", "Segoe UI", sans-serif;
 }
 
-.toast-success {
-    -fx-background-color: #23a55a;
+.discord-toast-username {
+    -fx-text-fill: #b5bac1;
+    -fx-font-size: 12px;
+    -fx-font-family: "Whitney", "Segoe UI", sans-serif;
 }
 
-.toast-warning {
-    -fx-background-color: #f0b232;
+.discord-toast-message {
+    -fx-text-fill: #dcddde;
+    -fx-font-size: 13px;
+    -fx-font-family: "Whitney", "Segoe UI", sans-serif;
 }
 
-.toast-error {
-    -fx-background-color: #f23f43;
-}
-
-.toast-info {
-    -fx-background-color: #4f545c;
-}
-
-.toast-icon {
-    -fx-text-fill: white;
+.discord-toast-close {
+    -fx-text-fill: #72767d;
     -fx-font-size: 16px;
     -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-padding: 0 4;
+    -fx-background-radius: 3;
 }
 
-.toast-title {
-    -fx-text-fill: white;
-    -fx-font-weight: bold;
-    -fx-font-size: 13px;
+.discord-toast-close:hover {
+    -fx-text-fill: #ffffff;
+    -fx-background-color: #f04747;
 }
 
-.toast-content {
-    -fx-text-fill: rgba(255,255,255,0.9);
-    -fx-font-size: 12px;
+.discord-toast-app-icon {
+    -fx-font-size: 16px;
+    -fx-pref-width: 24;
+    -fx-pref-height: 24;
+    -fx-alignment: center;
 }
 
 /* ===== TOP BAR ===== */

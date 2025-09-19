@@ -93,11 +93,11 @@ public class MainController {
         if (stage != null) {
             if (stage.isMaximized()) {
                 stage.setMaximized(false);
+                maxIcon.setText("□"); // Maximize icon
             } else {
                 stage.setMaximized(true);
+                maxIcon.setText("❐"); // Restore icon - two overlapping squares
             }
-            // Update maximize icon
-            maxIcon.setText(stage.isMaximized() ? "⬇" : "▢");
         }
     }
 
@@ -755,31 +755,29 @@ public class MainController {
 
     @FXML
     private void testToastNotifications() {
-        System.out.println("[MainController] Testing toast notifications...");
+        System.out.println("[MainController] Testing Discord-style toast notifications...");
 
-        // Test different toast types
-        notificationManager.showToast("Test Message", "This is a test message notification",
-                NotificationManager.ToastType.MESSAGE);
+        // Test message notification (Discord style)
+        notificationManager.showMessageNotification("Jam3s", "tghf");
 
         // Delay between toasts
         Platform.runLater(() -> {
             new Thread(() -> {
                 try {
-                    Thread.sleep(1000);
-                    Platform.runLater(() -> notificationManager.showToast("Success",
-                            "This is a success notification", NotificationManager.ToastType.SUCCESS));
-
-                    Thread.sleep(1000);
-                    Platform.runLater(() -> notificationManager.showToast("Warning",
-                            "This is a warning notification", NotificationManager.ToastType.WARNING));
-
-                    Thread.sleep(1000);
-                    Platform.runLater(() -> notificationManager.showToast("Error",
-                            "This is an error notification", NotificationManager.ToastType.ERROR));
-
-                    Thread.sleep(1000);
+                    Thread.sleep(1500);
                     Platform.runLater(() -> notificationManager.showMessageNotification("TestUser",
-                            "This is a simulated message notification with a longer message content to test wrapping"));
+                            "This is a longer message to test how the notification handles wrapping text content"));
+
+                    Thread.sleep(1500);
+                    Platform.runLater(() -> notificationManager.showFriendRequestNotification("NewFriend"));
+
+                    Thread.sleep(1500);
+                    Platform.runLater(() -> notificationManager.showSuccessNotification("Success",
+                            "Friend request accepted!"));
+
+                    Thread.sleep(1500);
+                    Platform.runLater(() -> notificationManager.showErrorNotification("Connection Error",
+                            "Unable to connect to server"));
 
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();

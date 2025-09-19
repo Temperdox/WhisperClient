@@ -12,7 +12,7 @@
     <!-- Main Application Content -->
     <VBox>
         <!-- Custom Title Bar -->
-        <HBox fx:id="customTitleBar" styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0" prefHeight="32">
+        <HBox fx:id="customTitleBar" styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0" prefHeight="40">
             <!-- App Icon and Title -->
             <HBox fx:id="titleArea" alignment="CENTER_LEFT" spacing="8" HBox.hgrow="ALWAYS">
                 <padding><Insets left="12"/></padding>
@@ -30,16 +30,16 @@
             <!-- Window Controls -->
             <HBox alignment="CENTER_RIGHT" spacing="0">
                 <!-- Minimize Button -->
-                <Label text="−" styleClass="window-icon" onMouseClicked="#minimizeWindow"
-                       prefWidth="46" prefHeight="32"/>
+                <Label text="─" styleClass="window-icon" onMouseClicked="#minimizeWindow"
+                       prefWidth="46" prefHeight="40"/>
 
                 <!-- Maximize/Restore Button -->
-                <Label fx:id="maxIcon" text="▢" styleClass="window-icon" onMouseClicked="#toggleMaximize"
-                       prefWidth="46" prefHeight="32"/>
+                <Label fx:id="maxIcon" text="□" styleClass="window-icon" onMouseClicked="#toggleMaximize"
+                       prefWidth="46" prefHeight="40"/>
 
                 <!-- Close Button -->
-                <Label text="x" styleClass="close-icon" onMouseClicked="#closeWindow"
-                       prefWidth="46" prefHeight="32"/>
+                <Label text="✕" styleClass="close-icon" onMouseClicked="#closeWindow"
+                       prefWidth="46" prefHeight="40"/>
             </HBox>
         </HBox>
 
