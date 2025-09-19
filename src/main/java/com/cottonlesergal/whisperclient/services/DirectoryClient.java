@@ -24,7 +24,6 @@ public class DirectoryClient {
             List<UserSummary> out = new ArrayList<>();
             for (JsonNode n : j.path("friends")) {
                 String u = n.asText();
-                // fetch display/avatar for friend
                 UserSummary s = lookup(u);
                 out.add(s != null ? s : new UserSummary(u,u,""));
             }
@@ -36,15 +35,31 @@ public class DirectoryClient {
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/pending"))
                     .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
-            JsonNode j = M.readTree(client.send(req, HttpResponse.BodyHandlers.ofString()).body());
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DirectoryClient] Pending requests response: " + response.statusCode());
+            System.out.println("[DirectoryClient] Pending requests body: " + response.body());
+
+            JsonNode j = M.readTree(response.body());
             List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : j.path("requests")) {
+            JsonNode requestsNode = j.path("requests");
+
+            System.out.println("[DirectoryClient] Found " + requestsNode.size() + " pending requests");
+
+            for (JsonNode n : requestsNode) {
                 String from = n.path("from").asText("");
+                System.out.println("[DirectoryClient] Processing request from: " + from);
                 UserSummary s = lookup(from);
                 out.add(s != null ? s : new UserSummary(from, from, ""));
             }
+
+            System.out.println("[DirectoryClient] Returning " + out.size() + " pending requests");
             return out;
-        } catch (Exception e){ e.printStackTrace(); return List.of(); }
+        } catch (Exception e){
+            System.err.println("[DirectoryClient] Error fetching pending requests: " + e.getMessage());
+            e.printStackTrace();
+            return List.of();
+        }
     }
 
     public UserSummary lookup(String u) {
@@ -83,6 +98,66 @@ public class DirectoryClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
             return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
         } catch (Exception e){ return false; }
+    }
+
+    /**
+     * Decline a friend request from a specific user
+     */
+    public boolean declineFriend(String from) {
+        try {
+            String body = "{\"from\":"+M.writeValueAsString(from)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/decline"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    /**
+     * Block a user (removes friendship if exists, declines pending requests, prevents future requests)
+     */
+    public boolean blockUser(String username) {
+        try {
+            String body = "{\"user\":"+M.writeValueAsString(username)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/block"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    /**
+     * Unblock a previously blocked user
+     */
+    public boolean unblockUser(String username) {
+        try {
+            String body = "{\"user\":"+M.writeValueAsString(username)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/unblock"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    /**
+     * Get list of blocked users
+     */
+    public List<UserSummary> blockedUsers() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/blocked"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            JsonNode j = M.readTree(client.send(req, HttpResponse.BodyHandlers.ofString()).body());
+            List<UserSummary> out = new ArrayList<>();
+            for (JsonNode n : j.path("blocked")) {
+                String u = n.asText();
+                UserSummary s = lookup(u);
+                out.add(s != null ? s : new UserSummary(u, u, ""));
+            }
+            return out;
+        } catch (Exception e){ e.printStackTrace(); return List.of(); }
     }
 
     public void removeFriend(String user) {
@@ -135,7 +210,6 @@ public class DirectoryClient {
 
     public boolean registerOrUpdate(UserProfile me) {
         try {
-            // build request JSON the worker expects
             var payload = M.createObjectNode()
                     .put("username", me.getUsername())
                     .put("pubkey",   me.getPubKey())
@@ -153,7 +227,6 @@ public class DirectoryClient {
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
             int code = res.statusCode();
 
-            // 200 => ok, 409 => username taken with different pubkey (surface as failure)
             if (code == 200) return true;
 
             System.err.println("[DirectoryClient] registerOrUpdate failed: " + code + " body=" + res.body());
