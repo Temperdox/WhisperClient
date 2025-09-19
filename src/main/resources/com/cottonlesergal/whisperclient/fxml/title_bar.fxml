@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<HBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.cottonlesergal.whisperclient.ui.CustomTitleBarController"
+      styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0"
+      prefHeight="32">
+
+    <!-- App Icon and Title -->
+    <HBox fx:id="titleArea" alignment="CENTER_LEFT" spacing="8" HBox.hgrow="ALWAYS">
+        <padding><Insets left="12"/></padding>
+
+        <!-- App Icon -->
+        <Label text="💬" style="-fx-font-size: 16px;"/>
+
+        <!-- Window Title -->
+        <Label fx:id="lblWindowTitle" text="WhisperClient" styleClass="window-title"/>
+
+        <!-- Draggable area filler -->
+        <Region HBox.hgrow="ALWAYS"/>
+    </HBox>
+
+    <!-- Window Controls -->
+    <HBox alignment="CENTER_RIGHT" spacing="0">
+        <!-- Minimize Button -->
+        <Button fx:id="btnMinimize" text="−" styleClass="window-btn minimize-btn"
+                onAction="#minimizeWindow" prefWidth="46" prefHeight="32"/>
+
+        <!-- Maximize/Restore Button -->
+        <Button fx:id="btnMaximize" text="□" styleClass="window-btn maximize-btn"
+                onAction="#toggleMaximize" prefWidth="46" prefHeight="32"/>
+
+        <!-- Close Button -->
+        <Button fx:id="btnClose" text="✕" styleClass="window-btn close-btn"
+                onAction="#closeWindow" prefWidth="46" prefHeight="32"/>
+    </HBox>
+
+</HBox>

@@ -4,16 +4,17 @@ import com.cottonlesergal.whisperclient.core.AppCtx;
 import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.models.UserProfile;
 import com.cottonlesergal.whisperclient.models.UserSummary;
-import com.cottonlesergal.whisperclient.services.Config;
-import com.cottonlesergal.whisperclient.services.DirectoryClient;
-import com.cottonlesergal.whisperclient.services.InboxWs;
+import com.cottonlesergal.whisperclient.services.*;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.AnchorPane;
 import javafx.scene.layout.HBox;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
@@ -25,13 +26,19 @@ public class MainController {
     @FXML private ListView<UserSummary> listFriends;
     @FXML private ListView<UserSummary> listRequests;
     @FXML private AnchorPane chatHost;
-    @FXML private TextArea txtMessage;
     @FXML private HBox meCard;
     @FXML private ImageView imgMe;
     @FXML private Label lblMeName;
     @FXML private Label lblMeHandle;
 
+    // Custom title bar controls
+    @FXML private HBox customTitleBar;
+    @FXML private HBox titleArea;
+    @FXML private Label lblWindowTitle;
+    @FXML private Label maxIcon;
+
     private final DirectoryClient directory = new DirectoryClient();
+    private final CredentialsStorageService credentialsStorage = CredentialsStorageService.getInstance();
     private final AtomicLong searchSeq = new AtomicLong();
     private InboxWs inbox;
 
@@ -43,10 +50,49 @@ public class MainController {
         setupCellFactories();
         setupEventHandlers();
         setupUI();
+        setupCustomTitleBar();
 
         renderMe();
         refreshFriends();
         refreshPending();
+    }
+
+    private void setupCustomTitleBar() {
+        Platform.runLater(() -> {
+            if (customTitleBar.getScene() != null && customTitleBar.getScene().getWindow() instanceof Stage) {
+                Stage stage = (Stage) customTitleBar.getScene().getWindow();
+                WindowDecoratorService windowDecorator = new WindowDecoratorService();
+                windowDecorator.decorateWindow(stage, titleArea);
+            }
+        });
+    }
+
+    // Window control methods
+    @FXML
+    private void minimizeWindow() {
+        Stage stage = (Stage) customTitleBar.getScene().getWindow();
+        if (stage != null) {
+            stage.setIconified(true);
+        }
+    }
+
+    @FXML
+    private void toggleMaximize() {
+        Stage stage = (Stage) customTitleBar.getScene().getWindow();
+        if (stage != null) {
+            if (stage.isMaximized()) {
+                stage.setMaximized(false);
+            } else {
+                stage.setMaximized(true);
+            }
+            // Update maximize icon
+            maxIcon.setText(stage.isMaximized() ? "❐" : "□");
+        }
+    }
+
+    @FXML
+    private void closeWindow() {
+        Platform.exit();
     }
 
     private void setupCellFactories() {
@@ -56,24 +102,20 @@ public class MainController {
         listRequests.setCellFactory(v -> new UserListCell(UserListCell.MenuType.REQUEST));
     }
 
-
     private void setupEventHandlers() {
         // Server-side events (from WebSocket)
         AppCtx.BUS.on("friend-request", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received friend-request event from: " + ev.from);
             refreshPending();
             showNotification("Friend Request", "New friend request from " + ev.from);
         }));
 
         AppCtx.BUS.on("friend-accepted", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received friend-accepted event from: " + ev.from);
             refreshFriends();
             refreshPending();
             showNotification("Friend Added", ev.from + " accepted your friend request");
         }));
 
         AppCtx.BUS.on("friend-removed", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received friend-removed event from: " + ev.from);
             refreshFriends();
             // If we were chatting with this user, clear the chat
             if (currentPeer != null && ev.data != null && ev.data.has("user")) {
@@ -85,13 +127,7 @@ public class MainController {
             showNotification("Friend Removed", "Friend relationship with " + ev.from + " has ended");
         }));
 
-        AppCtx.BUS.on("friend-declined", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received friend-declined event from: " + ev.from);
-            showNotification("Request Declined", ev.from + " declined your friend request");
-        }));
-
         AppCtx.BUS.on("user-blocked", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received user-blocked event from: " + ev.from);
             refreshFriends();
             refreshPending();
             if (currentPeer != null && ev.data != null && ev.data.has("user")) {
@@ -305,17 +341,10 @@ public class MainController {
     }
 
     private void refreshPending() {
-        System.out.println("[MainController] Refreshing pending requests...");
         CompletableFuture.supplyAsync(() -> directory.pending())
                 .thenAccept(pending -> Platform.runLater(() -> {
-                    System.out.println("[MainController] Got " + pending.size() + " pending requests");
                     listRequests.getItems().setAll(pending);
-                }))
-                .exceptionally(throwable -> {
-                    System.err.println("[MainController] Error refreshing pending: " + throwable.getMessage());
-                    throwable.printStackTrace();
-                    return null;
-                });
+                }));
     }
 
     @FXML private void onAddFriend() {
@@ -346,14 +375,121 @@ public class MainController {
         }
     }
 
-    @FXML private void onSend() {
-        if (txtMessage == null) return;
-        String t = txtMessage.getText();
-        if (t == null || t.isBlank() || currentPeer == null) return;
+    @FXML
+    private void onSettings() {
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/cottonlesergal/whisperclient/fxml/settings.fxml"));
 
-        directory.sendChat(currentPeer.getUsername(), t);
-        if (currentChat != null) currentChat.appendLocal(t);
-        txtMessage.clear();
+            Stage settingsStage = new Stage();
+            settingsStage.setTitle("Settings");
+            settingsStage.initModality(Modality.APPLICATION_MODAL);
+            settingsStage.initOwner(lblTitle.getScene().getWindow());
+
+            javafx.scene.Scene scene = new javafx.scene.Scene(loader.load(), 900, 600);
+            scene.getStylesheets().add(getClass().getResource("/com/cottonlesergal/whisperclient/css/app.css").toExternalForm());
+
+            settingsStage.setScene(scene);
+            settingsStage.setResizable(false);
+            settingsStage.show();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            showSimpleSettingsDialog();
+        }
+    }
+
+    @FXML
+    private void onLogout() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                "Are you sure you want to sign out?",
+                ButtonType.YES, ButtonType.NO);
+        confirm.setTitle("Sign Out");
+        confirm.setHeaderText("Sign Out of WhisperClient");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.YES) {
+                performLogout();
+            }
+        });
+    }
+
+    private void showSimpleSettingsDialog() {
+        Alert settingsDialog = new Alert(Alert.AlertType.INFORMATION);
+        settingsDialog.setTitle("Settings");
+        settingsDialog.setHeaderText("WhisperClient Settings");
+
+        // Create content with current user info and basic options
+        StringBuilder content = new StringBuilder();
+        if (Session.me != null) {
+            content.append("Signed in as: ").append(Session.me.getDisplayName()).append("\n");
+            content.append("Username: @").append(Session.me.getUsername()).append("\n");
+            content.append("Provider: ").append(Session.me.getProvider()).append("\n\n");
+        }
+
+        content.append("Auto sign-in: ").append(credentialsStorage.hasCredentials() ? "Enabled" : "Disabled").append("\n");
+        content.append("Message storage: Encrypted locally\n");
+        content.append("Connection: Secure WebSocket");
+
+        settingsDialog.setContentText(content.toString());
+
+        // Add disable auto sign-in option if enabled
+        if (credentialsStorage.hasCredentials()) {
+            ButtonType disableAutoSignIn = new ButtonType("Disable Auto Sign-In");
+            settingsDialog.getButtonTypes().add(disableAutoSignIn);
+
+            settingsDialog.showAndWait().ifPresent(response -> {
+                if (response == disableAutoSignIn) {
+                    credentialsStorage.clearCredentials();
+                    showNotification("Auto Sign-In Disabled", "You will need to sign in manually next time");
+                }
+            });
+        } else {
+            settingsDialog.showAndWait();
+        }
+    }
+
+    private void performLogout() {
+        try {
+            // Clear credentials to disable auto sign-in
+            credentialsStorage.clearCredentials();
+
+            // Clear session data
+            Session.me = null;
+            Session.token = null;
+            Config.APP_TOKEN = "";
+
+            // Disconnect inbox WebSocket
+            if (inbox != null) {
+                // Note: You might need to add a disconnect method to InboxWs
+                inbox = null;
+            }
+
+            // Clear UI state
+            clearChat();
+            listFriends.getItems().clear();
+            listRequests.getItems().clear();
+            listSearch.getItems().clear();
+
+            // Navigate back to login screen
+            FXMLLoader loader = new FXMLLoader(
+                    getClass().getResource("/com/cottonlesergal/whisperclient/fxml/login.fxml")
+            );
+
+            Stage stage = (Stage) lblTitle.getScene().getWindow();
+            Scene loginScene = new Scene(loader.load(), 1080, 720);
+            loginScene.getStylesheets().add(
+                    getClass().getResource("/com/cottonlesergal/whisperclient/css/app.css").toExternalForm()
+            );
+
+            stage.setScene(loginScene);
+            stage.setTitle("WhisperClient");
+
+            System.out.println("[MainController] Successfully logged out");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            showError("Logout Error", "Failed to return to login screen: " + e.getMessage());
+        }
     }
 
     private void openChatWith(UserSummary peer) {
@@ -361,15 +497,39 @@ public class MainController {
             lblTitle.setText("DM with @" + peer.getUsername());
             currentPeer = peer;
 
-            FXMLLoader fx = new FXMLLoader(getClass().getResource("/com/cottonlesergal/whisperclient/fxml/chat.fxml"));
+            // Try different possible FXML locations
+            String[] possiblePaths = {
+                    "/com/cottonlesergal/whisperclient/fxml/chat.fxml",
+                    "/com/cottonlesergal/whisperclient/fxml/chat_view.fxml",
+                    "chat.fxml",
+                    "chat_view.fxml"
+            };
+
+            FXMLLoader fx = null;
+            for (String path : possiblePaths) {
+                var resource = getClass().getResource(path);
+                if (resource != null) {
+                    fx = new FXMLLoader(resource);
+                    System.out.println("[MainController] Found FXML at: " + path);
+                    break;
+                }
+            }
+
+            if (fx == null) {
+                showError("Chat FXML not found", "Could not locate chat.fxml in resources");
+                return;
+            }
+
             AnchorPane pane = fx.load();
             currentChat = fx.getController();
 
+            // Create Friend object with avatar information
             var f = new com.cottonlesergal.whisperclient.models.Friend(
                     peer.getUsername(),
+                    "", // pubkey - not needed for display
+                    "", // inboxUrl - not needed for display
                     peer.getDisplay(),
-                    peer.getAvatar(),
-                    ""
+                    peer.getAvatar() // avatar URL
             );
             currentChat.bindFriend(f);
 

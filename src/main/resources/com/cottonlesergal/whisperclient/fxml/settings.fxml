@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.*?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.image.*?>
+<?import javafx.scene.shape.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.cottonlesergal.whisperclient.ui.SettingsController"
+            prefWidth="900" prefHeight="600"
+            style="-fx-background-color: #313338;">
+
+    <!-- Left Sidebar -->
+    <left>
+        <VBox styleClass="settings-sidebar" prefWidth="220" spacing="0">
+            <padding><Insets top="20" right="0" bottom="20" left="20"/></padding>
+
+            <!-- User Settings Section -->
+            <Label text="USER SETTINGS" styleClass="settings-section-header"/>
+            <Button fx:id="btnMyAccount" text="My Account" styleClass="settings-nav-btn active-nav-btn"
+                    onAction="#showMyAccount"/>
+            <Button text="Profiles" styleClass="settings-nav-btn" onAction="#showProfiles"/>
+            <Button text="Privacy &amp; Safety" styleClass="settings-nav-btn"/>
+            <Button text="Authorized Apps" styleClass="settings-nav-btn"/>
+            <Button text="Connections" styleClass="settings-nav-btn"/>
+
+            <Region prefHeight="20"/>
+
+            <!-- App Settings Section -->
+            <Label text="APP SETTINGS" styleClass="settings-section-header"/>
+            <Button text="Appearance" styleClass="settings-nav-btn"/>
+            <Button text="Accessibility" styleClass="settings-nav-btn"/>
+            <Button text="Voice &amp; Video" styleClass="settings-nav-btn"/>
+            <Button text="Chat" styleClass="settings-nav-btn"/>
+            <Button text="Notifications" styleClass="settings-nav-btn"/>
+            <Button text="Keybinds" styleClass="settings-nav-btn"/>
+            <Button text="Language" styleClass="settings-nav-btn"/>
+            <Button text="Advanced" styleClass="settings-nav-btn"/>
+
+            <Region VBox.vgrow="ALWAYS"/>
+
+            <!-- Logout Button -->
+            <Button text="Log Out" styleClass="settings-nav-btn logout-nav-btn"
+                    onAction="#onLogout"/>
+        </VBox>
+    </left>
+
+    <!-- Main Content Area -->
+    <center>
+        <VBox styleClass="settings-content">
+
+            <!-- Content Container -->
+            <ScrollPane fitToWidth="true" fitToHeight="true" VBox.vgrow="ALWAYS"
+                        style="-fx-background-color: transparent; -fx-background: transparent;">
+
+                <VBox fx:id="contentArea" spacing="24" styleClass="settings-content-inner">
+                    <padding><Insets topRightBottomLeft="40"/></padding>
+
+                    <!-- My Account Content -->
+                    <VBox fx:id="myAccountContent" spacing="20">
+
+                        <!-- Header -->
+                        <Label text="My Account" styleClass="settings-page-title"/>
+
+                        <!-- Profile Section -->
+                        <VBox spacing="16" styleClass="settings-card">
+                            <padding><Insets topRightBottomLeft="20"/></padding>
+
+                            <HBox spacing="20" alignment="CENTER_LEFT">
+                                <!-- Current Avatar -->
+                                <VBox alignment="CENTER" spacing="8">
+                                    <ImageView fx:id="profileAvatar" fitWidth="80" fitHeight="80">
+                                        <clip><Circle radius="40" centerX="40" centerY="40"/></clip>
+                                    </ImageView>
+                                    <Button text="Change Avatar" styleClass="change-avatar-btn"
+                                            onAction="#changeAvatar"/>
+                                </VBox>
+
+                                <!-- Profile Info -->
+                                <VBox spacing="12" HBox.hgrow="ALWAYS">
+                                    <Label fx:id="lblCurrentUser" text="cottonlesergal"
+                                           styleClass="current-username"/>
+                                    <Label fx:id="lblCurrentTag" text="@cottonlesergal"
+                                           styleClass="current-tag"/>
+                                </VBox>
+
+                                <!-- Edit Button -->
+                                <Button text="Edit" styleClass="edit-profile-btn"
+                                        onAction="#editProfile"/>
+                            </HBox>
+                        </VBox>
+
+                        <!-- Account Information -->
+                        <VBox spacing="16" styleClass="settings-card">
+                            <padding><Insets topRightBottomLeft="20"/></padding>
+
+                            <Label text="Account Information" styleClass="settings-card-title"/>
+
+                            <!-- Display Name Field -->
+                            <VBox spacing="8">
+                                <Label text="DISPLAY NAME" styleClass="field-label"/>
+                                <HBox spacing="12" alignment="CENTER_LEFT">
+                                    <TextField fx:id="txtDisplayName" styleClass="settings-input"
+                                               HBox.hgrow="ALWAYS" promptText="Enter display name"/>
+                                    <Button text="Save" styleClass="save-btn" onAction="#saveDisplayName"/>
+                                </HBox>
+                                <Label text="This is how others see your name" styleClass="field-help"/>
+                            </VBox>
+
+                            <!-- Username (Read-only) -->
+                            <VBox spacing="8">
+                                <Label text="USERNAME" styleClass="field-label"/>
+                                <TextField fx:id="txtUsername" styleClass="settings-input readonly-input"
+                                           editable="false"/>
+                                <Label text="Your unique username - cannot be changed" styleClass="field-help"/>
+                            </VBox>
+
+                            <!-- Provider Info -->
+                            <VBox spacing="8">
+                                <Label text="SIGN-IN PROVIDER" styleClass="field-label"/>
+                                <HBox spacing="12" alignment="CENTER_LEFT">
+                                    <Label fx:id="lblProvider" text="Discord" styleClass="provider-label"/>
+                                    <Label fx:id="lblProviderEmail" text="Connected" styleClass="provider-status"/>
+                                </HBox>
+                            </VBox>
+                        </VBox>
+
+                        <!-- Auto Sign-In Settings -->
+                        <VBox spacing="16" styleClass="settings-card">
+                            <padding><Insets topRightBottomLeft="20"/></padding>
+
+                            <Label text="Sign-In Settings" styleClass="settings-card-title"/>
+
+                            <HBox spacing="12" alignment="CENTER_LEFT">
+                                <CheckBox fx:id="chkAutoSignIn" styleClass="settings-checkbox"/>
+                                <VBox>
+                                    <Label text="Remember me" styleClass="checkbox-label"/>
+                                    <Label text="Stay signed in on this device" styleClass="checkbox-help"/>
+                                </VBox>
+                            </HBox>
+                        </VBox>
+
+                    </VBox>
+
+                </VBox>
+            </ScrollPane>
+        </VBox>
+    </center>
+
+    <!-- Close Button -->
+    <top>
+        <HBox alignment="CENTER_RIGHT" style="-fx-padding: 12;">
+            <Button fx:id="btnClose" text="✕" styleClass="close-btn" onAction="#closeSettings"/>
+        </HBox>
+    </top>
+
+</BorderPane>

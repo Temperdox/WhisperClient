@@ -20,8 +20,11 @@ module com.cottonlesergal.whisperclient {
 
     // Let WebView call methods on the JS bridge class (SignalingClient.JsBridge)
     // (WebView reflects into this package)
-    opens com.cottonlesergal.whisperclient.services to javafx.web, jdk.jsobject;
+
+    // Export services package to Jackson for serialization
+    exports com.cottonlesergal.whisperclient.services to com.fasterxml.jackson.databind;
 
     // Export your main package so MainApp is discoverable
     exports com.cottonlesergal.whisperclient;
+    opens com.cottonlesergal.whisperclient.services to com.fasterxml.jackson.databind, javafx.fxml, javafx.web, jdk.jsobject;
 }

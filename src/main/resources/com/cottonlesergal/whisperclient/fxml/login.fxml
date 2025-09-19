@@ -1,17 +1,100 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.geometry.*?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.control.*?>
-<BorderPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
-            fx:controller="com.cottonlesergal.whisperclient.ui.LoginController">
-    <center>
-        <VBox spacing="16" alignment="CENTER">
-            <Label text="WhisperClient" styleClass="title"/>
-            <Label text="Sign in to continue" styleClass="subtitle"/>
-            <HBox spacing="12">
-                <Button text="Sign in with Google" onAction="#onGoogle"/>
-                <Button text="Sign in with Discord" onAction="#onDiscord"/>
-            </HBox>
-            <Label fx:id="lblStatus"/>
-        </VBox>
-    </center>
-</BorderPane>
+
+<VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.cottonlesergal.whisperclient.ui.LoginController"
+      style="-fx-background-color: #2b2d31;">
+
+    <!-- Custom Title Bar -->
+    <HBox fx:id="customTitleBar" styleClass="custom-title-bar" alignment="CENTER_LEFT" spacing="0" prefHeight="32">
+        <!-- App Icon and Title -->
+        <HBox fx:id="titleArea" alignment="CENTER_LEFT" spacing="8" HBox.hgrow="ALWAYS">
+            <padding><Insets left="12"/></padding>
+
+            <!-- App Icon -->
+            <Label text="💬" style="-fx-font-size: 16px;"/>
+
+            <!-- Window Title -->
+            <Label fx:id="lblWindowTitle" text="WhisperClient" styleClass="window-title"/>
+
+            <!-- Draggable area filler -->
+            <Region HBox.hgrow="ALWAYS"/>
+        </HBox>
+
+        <!-- Window Controls -->
+        <HBox alignment="CENTER_RIGHT" spacing="0">
+            <!-- Minimize Button -->
+            <Label text="−" styleClass="window-icon" onMouseClicked="#minimizeWindow"
+                   prefWidth="46" prefHeight="32"/>
+
+            <!-- Maximize/Restore Button -->
+            <Label fx:id="maxIcon" text="□" styleClass="window-icon" onMouseClicked="#toggleMaximize"
+                   prefWidth="46" prefHeight="32"/>
+
+            <!-- Close Button -->
+            <Label text="x" styleClass="close-icon" onMouseClicked="#closeWindow"
+                   prefWidth="46" prefHeight="32"/>
+        </HBox>
+    </HBox>
+
+    <!-- Login Content Area -->
+    <BorderPane VBox.vgrow="ALWAYS">
+        <center>
+            <VBox spacing="24" alignment="CENTER" styleClass="login-container">
+                <padding><Insets topRightBottomLeft="64"/></padding>
+
+                <!-- App Title -->
+                <VBox spacing="8" alignment="CENTER">
+                    <Label text="WhisperClient" styleClass="login-title"
+                           style="-fx-text-fill: #f2f3f5; -fx-font-size: 28px; -fx-font-weight: 700;"/>
+                    <Label text="Sign in to continue" styleClass="login-subtitle"
+                           style="-fx-text-fill: #b5bac1; -fx-font-size: 16px;"/>
+                </VBox>
+
+                <!-- Auto-sign in progress indicator (initially hidden) -->
+                <VBox fx:id="autoSignInContainer" spacing="12" alignment="CENTER" visible="false" managed="false">
+                    <Label text="Signing you in automatically..."
+                           style="-fx-text-fill: #87898c; -fx-font-size: 14px;"/>
+                    <ProgressIndicator prefWidth="32" prefHeight="32"/>
+                </VBox>
+
+                <!-- Login Buttons Container -->
+                <VBox fx:id="loginButtonsContainer" spacing="12" alignment="CENTER" maxWidth="280">
+                    <!-- Google Sign In -->
+                    <Button text="Continue with Google" onAction="#onGoogle"
+                            prefWidth="260" prefHeight="44"
+                            style="-fx-background-color: #5865f2; -fx-text-fill: #ffffff;
+                                   -fx-background-radius: 8; -fx-font-size: 14px; -fx-font-weight: 500;"/>
+
+                    <!-- Discord Sign In -->
+                    <Button text="Continue with Discord" onAction="#onDiscord"
+                            prefWidth="260" prefHeight="44"
+                            style="-fx-background-color: #5865f2; -fx-text-fill: #ffffff;
+                                   -fx-background-radius: 8; -fx-font-size: 14px; -fx-font-weight: 500;"/>
+
+                    <!-- Remember Me Checkbox -->
+                    <HBox spacing="8" alignment="CENTER">
+                        <CheckBox fx:id="chkRememberMe" text="Remember me"
+                                  style="-fx-text-fill: #b5bac1; -fx-font-size: 13px;"
+                                  selected="true"/>
+                    </HBox>
+                </VBox>
+
+                <!-- Status/Error Label -->
+                <Label fx:id="lblStatus"
+                       style="-fx-text-fill: #f23f43; -fx-font-size: 13px;"
+                       maxWidth="300" wrapText="true" textAlignment="CENTER"/>
+
+                <!-- Footer Information -->
+                <VBox spacing="4" alignment="CENTER" style="-fx-padding: 32 0 0 0;">
+                    <Label text="Secure • Encrypted • Private"
+                           style="-fx-text-fill: #87898c; -fx-font-size: 12px; -fx-font-style: italic;"/>
+                </VBox>
+
+            </VBox>
+        </center>
+    </BorderPane>
+
+</VBox>

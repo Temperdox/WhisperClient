@@ -175,8 +175,25 @@ public class UserListCell extends ListCell<UserSummary> {
             setGraphic(null);
             return;
         }
+
+        // Use updated avatar and display name
         avatar.setImage(AvatarCache.get(item.getAvatar(), 32));
-        name.setText(item.getDisplay().isBlank() ? item.getUsername() : item.getDisplay());
+        String displayText = item.getDisplay() != null && !item.getDisplay().isBlank()
+                ? item.getDisplay()
+                : item.getUsername();
+        name.setText(displayText);
         setGraphic(box);
+    }
+
+    /**
+     * Update this cell's data when a profile update event is received
+     */
+    public void updateProfile(String username, String newDisplay, String newAvatar) {
+        UserSummary currentItem = getItem();
+        if (currentItem != null && currentItem.getUsername().equalsIgnoreCase(username)) {
+            // Create updated UserSummary
+            UserSummary updated = new UserSummary(username, newDisplay, newAvatar);
+            updateItem(updated, false);
+        }
     }
 }

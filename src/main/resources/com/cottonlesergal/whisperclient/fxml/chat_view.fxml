@@ -1,14 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.control.*?>
-<VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.cottonlesergal.whisperclient.ui.ChatController" spacing="8" padding="10">
-    <ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS">
-        <VBox fx:id="messagesBox" spacing="6"/>
-    </ScrollPane>
-    <HBox spacing="8">
-        <TextField fx:id="txtMessage" promptText="Message… " HBox.hgrow="ALWAYS"/>
-        <Button text="📎" onAction="#onAttach"/>
-        <Button text="Send" onAction="#onSend"/>
-    </HBox>
-</VBox>
+<AnchorPane xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.cottonlesergal.whisperclient.ui.ChatController"
+            styleClass="chat-root">
+
+    <VBox AnchorPane.topAnchor="0" AnchorPane.rightAnchor="0"
+          AnchorPane.bottomAnchor="0" AnchorPane.leftAnchor="0">
+
+        <!-- Messages area with custom scroll pane -->
+        <ScrollPane fx:id="scrollPane" fitToWidth="true" VBox.vgrow="ALWAYS"
+                    styleClass="chat-scroll" hbarPolicy="NEVER">
+            <VBox fx:id="messagesBox" styleClass="messages-container"/>
+        </ScrollPane>
+
+        <!-- Message input -->
+        <HBox spacing="8" styleClass="composer" alignment="CENTER_LEFT"
+              style="-fx-padding: 10; -fx-background-color: #1e2124; -fx-border-color: #2b2d31; -fx-border-width: 1 0 0 0;">
+
+            <Button text="+" styleClass="round"/>
+            <TextField fx:id="txtMessage" promptText="Type a message..."
+                       HBox.hgrow="ALWAYS" onAction="#onSend"/>
+            <Button text="Send" onAction="#onSend"/>
+        </HBox>
+
+    </VBox>
+
+</AnchorPane>
