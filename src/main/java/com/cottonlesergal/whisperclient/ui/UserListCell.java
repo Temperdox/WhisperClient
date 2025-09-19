@@ -64,20 +64,13 @@ public class UserListCell extends ListCell<UserSummary> {
     private void setupNotificationBadge() {
         notificationBadge.setVisible(false);
         notificationBadge.setManaged(false);
-        notificationBadge.setPrefSize(20, 20);
-        notificationBadge.setMinSize(20, 20);
-        notificationBadge.setMaxSize(20, 20);
-        notificationBadge.setAlignment(Pos.CENTER);
+        notificationBadge.getStyleClass().add("notification-badge");
 
-        // Style the badge
-        notificationBadge.setStyle(
-                "-fx-background-color: #f23f43;" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-text-fill: white;" +
-                        "-fx-font-size: 10px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 2, 0, 0, 1);"
-        );
+        // Remove fixed size constraints - let CSS handle sizing
+        notificationBadge.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        notificationBadge.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
+        notificationBadge.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        notificationBadge.setAlignment(Pos.CENTER);
     }
 
     private void updateNotificationBadge(String username) {
@@ -92,23 +85,21 @@ public class UserListCell extends ListCell<UserSummary> {
         if (count > 0) {
             String displayCount = count > 99 ? "99+" : String.valueOf(count);
             notificationBadge.setText(displayCount);
+
+            // Remove existing style classes
+            notificationBadge.getStyleClass().removeAll("notification-badge-single", "notification-badge-double", "notification-badge-triple");
+
+            // Add appropriate style class based on text length
+            if (count > 99) {
+                notificationBadge.getStyleClass().add("notification-badge-triple");
+            } else if (count > 9) {
+                notificationBadge.getStyleClass().add("notification-badge-double");
+            } else {
+                notificationBadge.getStyleClass().add("notification-badge-single");
+            }
+
             notificationBadge.setVisible(true);
             notificationBadge.setManaged(true);
-
-            // Adjust size based on text length
-            if (count > 99) {
-                notificationBadge.setPrefSize(28, 20);
-                notificationBadge.setMinSize(28, 20);
-                notificationBadge.setMaxSize(28, 20);
-            } else if (count > 9) {
-                notificationBadge.setPrefSize(24, 20);
-                notificationBadge.setMinSize(24, 20);
-                notificationBadge.setMaxSize(24, 20);
-            } else {
-                notificationBadge.setPrefSize(20, 20);
-                notificationBadge.setMinSize(20, 20);
-                notificationBadge.setMaxSize(20, 20);
-            }
         } else {
             notificationBadge.setVisible(false);
             notificationBadge.setManaged(false);

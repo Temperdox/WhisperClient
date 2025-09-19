@@ -696,4 +696,95 @@ public class MainController {
         currentPeer = null;
         lblTitle.setText("Whisper");
     }
+
+    // === TEST METHODS FOR NOTIFICATION SYSTEM ===
+    @FXML
+    private void testNotificationBadges() {
+        System.out.println("[MainController] Testing notification badges...");
+
+        // Test different badge counts
+        if (!listFriends.getItems().isEmpty()) {
+            UserSummary firstFriend = listFriends.getItems().get(0);
+            String username = firstFriend.getUsername();
+
+            // Test single digit
+            notificationManager.incrementNotificationCount(username);
+            refreshFriendsUI();
+
+            // Wait and test double digit after 2 seconds
+            Platform.runLater(() -> {
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(2000);
+                        Platform.runLater(() -> {
+                            // Add 14 more to make it 15
+                            for (int i = 0; i < 14; i++) {
+                                notificationManager.incrementNotificationCount(username);
+                            }
+                            refreshFriendsUI();
+                            System.out.println("Badge should now show: 15");
+                        });
+
+                        Thread.sleep(2000);
+                        Platform.runLater(() -> {
+                            // Add 85 more to make it 100 (which shows as 99+)
+                            for (int i = 0; i < 85; i++) {
+                                notificationManager.incrementNotificationCount(username);
+                            }
+                            refreshFriendsUI();
+                            System.out.println("Badge should now show: 99+");
+                        });
+
+                        Thread.sleep(3000);
+                        Platform.runLater(() -> {
+                            // Clear the badge
+                            notificationManager.clearNotificationCount(username);
+                            refreshFriendsUI();
+                            System.out.println("Badge should now be hidden");
+                        });
+
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }).start();
+            });
+        } else {
+            System.out.println("No friends to test badges with");
+        }
+    }
+
+    @FXML
+    private void testToastNotifications() {
+        System.out.println("[MainController] Testing toast notifications...");
+
+        // Test different toast types
+        notificationManager.showToast("Test Message", "This is a test message notification",
+                NotificationManager.ToastType.MESSAGE);
+
+        // Delay between toasts
+        Platform.runLater(() -> {
+            new Thread(() -> {
+                try {
+                    Thread.sleep(1000);
+                    Platform.runLater(() -> notificationManager.showToast("Success",
+                            "This is a success notification", NotificationManager.ToastType.SUCCESS));
+
+                    Thread.sleep(1000);
+                    Platform.runLater(() -> notificationManager.showToast("Warning",
+                            "This is a warning notification", NotificationManager.ToastType.WARNING));
+
+                    Thread.sleep(1000);
+                    Platform.runLater(() -> notificationManager.showToast("Error",
+                            "This is an error notification", NotificationManager.ToastType.ERROR));
+
+                    Thread.sleep(1000);
+                    Platform.runLater(() -> notificationManager.showMessageNotification("TestUser",
+                            "This is a simulated message notification with a longer message content to test wrapping"));
+
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+        });
+    }
 }

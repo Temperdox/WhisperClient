@@ -54,7 +54,13 @@
                     <Button text="🎙" styleClass="round"/>
                     <Button text="🎥" styleClass="round"/>
                     <Button text="🔍" styleClass="round"/>
-                    <!-- Debug Button - Remove this in production -->
+                    <!-- Test Buttons - Remove these in production -->
+                    <Button text="🔔" styleClass="round" onAction="#testNotificationBadges">
+                        <tooltip><Tooltip text="Test Notification Badges"/></tooltip>
+                    </Button>
+                    <Button text="🍞" styleClass="round" onAction="#testToastNotifications">
+                        <tooltip><Tooltip text="Test Toast Notifications"/></tooltip>
+                    </Button>
                     <Button text="🐛" styleClass="round" onAction="#debugConnection">
                         <tooltip><Tooltip text="Debug Connection"/></tooltip>
                     </Button>
