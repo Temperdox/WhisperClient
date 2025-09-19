@@ -74,8 +74,70 @@ public class ChatController {
         setupKeyboardShortcuts();
         setupClipboardPaste();
         setupPreviewContainer();
+        setupAttachButton();
 
         System.out.println("[ChatController] Initialized with enhanced media system and chunking support");
+    }
+
+    private void setupAttachButton() {
+        if (btnAttach != null) {
+            btnAttach.setOnAction(this::onAttachFile);
+            btnAttach.setTooltip(new Tooltip("Attach files (images, videos, audio, documents)"));
+        }
+    }
+
+    @FXML
+    private void onAttachFile(javafx.event.ActionEvent event) {
+        openFileChooser();
+    }
+
+    private void openFileChooser() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select Files to Send");
+
+        // Set up file filters
+        fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("All Supported",
+                        "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp",
+                        "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv",
+                        "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac",
+                        "*.pdf", "*.txt", "*.doc", "*.docx", "*.zip"),
+                new FileChooser.ExtensionFilter("Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"),
+                new FileChooser.ExtensionFilter("Videos", "*.mp4", "*.webm", "*.mov", "*.avi", "*.mkv"),
+                new FileChooser.ExtensionFilter("Audio", "*.mp3", "*.wav", "*.ogg", "*.m4a", "*.flac"),
+                new FileChooser.ExtensionFilter("Documents", "*.pdf", "*.txt", "*.doc", "*.docx"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+
+        // Set initial directory to user's documents or pictures
+        String userHome = System.getProperty("user.home");
+        if (userHome != null) {
+            File documentsDir = new File(userHome, "Documents");
+            File picturesDir = new File(userHome, "Pictures");
+
+            if (picturesDir.exists()) {
+                fileChooser.setInitialDirectory(picturesDir);
+            } else if (documentsDir.exists()) {
+                fileChooser.setInitialDirectory(documentsDir);
+            }
+        }
+
+        // Show file chooser
+        Stage stage = (Stage) txtMessage.getScene().getWindow();
+        List<File> selectedFiles = fileChooser.showOpenMultipleDialog(stage);
+
+        if (selectedFiles != null && !selectedFiles.isEmpty()) {
+            System.out.println("[ChatController] Selected " + selectedFiles.size() + " files");
+
+            if (pendingUploads.size() + selectedFiles.size() > 10) {
+                showError("Upload Limit", "Cannot upload more than 10 files at once. Please select fewer files.");
+                return;
+            }
+
+            for (File file : selectedFiles) {
+                processFileForUpload(file);
+            }
+        }
     }
 
     private void setupPreviewContainer() {
@@ -85,6 +147,32 @@ public class ChatController {
         previewContainer.setVisible(false);
         previewContainer.setManaged(false);
         previewContainer.setStyle("-fx-background-color: #36393f; -fx-border-color: #40444b; -fx-border-width: 1 0 0 0;");
+
+        // Add preview container to the UI structure
+        Platform.runLater(() -> {
+            if (scrollPane.getParent() instanceof VBox) {
+                VBox parent = (VBox) scrollPane.getParent();
+                // Find the input area (HBox with text field)
+                Node inputArea = null;
+                for (Node child : parent.getChildren()) {
+                    if (child instanceof HBox) {
+                        inputArea = child;
+                        break;
+                    }
+                }
+
+                if (inputArea != null) {
+                    int inputIndex = parent.getChildren().indexOf(inputArea);
+                    parent.getChildren().add(inputIndex, previewContainer);
+                    System.out.println("[ChatController] Added preview container to UI");
+                } else {
+                    System.err.println("[ChatController] Could not find input area to add preview container");
+                }
+            } else {
+                System.err.println("[ChatController] ScrollPane parent is not VBox: " +
+                        (scrollPane.getParent() != null ? scrollPane.getParent().getClass().getSimpleName() : "null"));
+            }
+        });
     }
 
     private void setupScrollPane() {
@@ -106,7 +194,16 @@ public class ChatController {
         clearPreviews.setOnAction(e -> clearAllPreviews());
         MenuItem refreshChat = new MenuItem("Refresh Conversation");
         refreshChat.setOnAction(e -> refreshConversation());
-        chatAreaMenu.getItems().addAll(clearHistory, new SeparatorMenuItem(), clearPreviews, refreshChat);
+        MenuItem pasteFile = new MenuItem("Paste Image/File");
+        pasteFile.setOnAction(e -> handleClipboardPaste());
+
+        chatAreaMenu.getItems().addAll(clearHistory, new SeparatorMenuItem(), clearPreviews, refreshChat, new SeparatorMenuItem(), pasteFile);
+
+        // Update context menu based on clipboard content
+        chatAreaMenu.setOnShowing(e -> {
+            pasteFile.setDisable(!hasImageOrFileInClipboard());
+        });
+
         messagesBox.setOnContextMenuRequested(event -> {
             chatAreaMenu.show(messagesBox, event.getScreenX(), event.getScreenY());
             event.consume();
@@ -121,6 +218,22 @@ public class ChatController {
     }
 
     private void setupKeyboardShortcuts() {
+        // Scene-level key handling for global shortcuts
+        Platform.runLater(() -> {
+            if (txtMessage.getScene() != null) {
+                txtMessage.getScene().setOnKeyPressed(event -> {
+                    // Global Ctrl+V for pasting images/files
+                    if (event.isControlDown() && event.getCode() == KeyCode.V) {
+                        if (!txtMessage.isFocused()) {
+                            // If message field isn't focused, handle as file paste
+                            handleClipboardPaste();
+                            event.consume();
+                        }
+                    }
+                });
+            }
+        });
+
         txtMessage.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ENTER) {
                 if (event.isShiftDown()) {
@@ -132,16 +245,38 @@ public class ChatController {
                 }
                 event.consume();
             } else if (event.isControlDown() && event.getCode() == KeyCode.V) {
-                // Ctrl+V for paste (handled by setupClipboardPaste)
+                // Check clipboard for images/files first, then allow normal text paste
+                if (hasImageOrFileInClipboard()) {
+                    handleClipboardPaste();
+                    event.consume(); // Prevent default text paste
+                }
+                // If no images/files, allow normal text paste to proceed
             }
         });
     }
 
     private void setupClipboardPaste() {
-        txtMessage.setOnKeyReleased(event -> {
-            if (event.isControlDown() && event.getCode() == KeyCode.V) {
-                handleClipboardPaste();
+        // Add context menu to message input for paste
+        ContextMenu inputContextMenu = new ContextMenu();
+        MenuItem pasteText = new MenuItem("Paste Text");
+        pasteText.setOnAction(e -> {
+            Clipboard clipboard = Clipboard.getSystemClipboard();
+            if (clipboard.hasString()) {
+                txtMessage.insertText(txtMessage.getCaretPosition(), clipboard.getString());
             }
+        });
+
+        MenuItem pasteFile = new MenuItem("Paste Image/File");
+        pasteFile.setOnAction(e -> handleClipboardPaste());
+
+        inputContextMenu.getItems().addAll(pasteText, pasteFile);
+        txtMessage.setContextMenu(inputContextMenu);
+
+        // Update context menu visibility based on clipboard content
+        inputContextMenu.setOnShowing(e -> {
+            Clipboard clipboard = Clipboard.getSystemClipboard();
+            pasteText.setDisable(!clipboard.hasString());
+            pasteFile.setDisable(!hasImageOrFileInClipboard());
         });
     }
 
@@ -179,24 +314,40 @@ public class ChatController {
         } else if (clipboard.hasFiles()) {
             List<File> files = clipboard.getFiles();
             for (File file : files) {
+                if (pendingUploads.size() >= 10) {
+                    showError("Upload Limit", "Cannot upload more than 10 files at once.");
+                    break;
+                }
                 processFileForUpload(file);
             }
+        } else {
+            System.out.println("[ChatController] No image or files in clipboard");
         }
+    }
+
+    private boolean hasImageOrFileInClipboard() {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        return clipboard.hasImage() || clipboard.hasFiles();
     }
 
     private void processImageFromClipboard(Image image) {
         try {
+            System.out.println("[ChatController] Processing pasted image from clipboard");
+
             // Convert to BufferedImage
             BufferedImage bufferedImage = SwingFXUtils.fromFXImage(image, null);
 
             // Create temporary file
             String timestamp = String.valueOf(System.currentTimeMillis());
-            File tempFile = new File(System.getProperty("java.io.tmpdir"), "pasted_image_" + timestamp + ".png");
+            String tempDir = System.getProperty("java.io.tmpdir");
+            File tempFile = new File(tempDir, "pasted_image_" + timestamp + ".png");
 
             // Write image to file
             ImageIO.write(bufferedImage, "png", tempFile);
 
-            System.out.println("[ChatController] Processing pasted image for preview");
+            System.out.println("[ChatController] Created temp file for pasted image: " + tempFile.getAbsolutePath() +
+                    " (" + formatFileSize(tempFile.length()) + ")");
+
             processFileForUpload(tempFile);
 
         } catch (Exception e) {
@@ -215,6 +366,24 @@ public class ChatController {
 
             MediaPreview preview = previewService.createPreview(file);
             pendingUploads.add(preview);
+
+            // Set up remove callback
+            preview.setOnRemove(() -> {
+                pendingUploads.remove(preview);
+                Platform.runLater(() -> {
+                    previewContainer.getChildren().remove(preview.getPreviewNode());
+                    updatePreviewVisibility();
+
+                    // Clean up temp file if it's a pasted image
+                    previewService.cleanupTempFile(preview);
+                });
+            });
+
+            // Set up send callback (individual file send)
+            preview.setOnSend(() -> {
+                List<MediaPreview> singlePreview = List.of(preview);
+                sendPendingMedia(singlePreview, null);
+            });
 
             Platform.runLater(() -> {
                 previewContainer.getChildren().add(preview.getPreviewNode());
@@ -235,6 +404,9 @@ public class ChatController {
         boolean hasUploads = !pendingUploads.isEmpty();
         previewContainer.setVisible(hasUploads);
         previewContainer.setManaged(hasUploads);
+
+        System.out.println("[ChatController] Updated preview visibility: " + hasUploads +
+                " (uploads: " + pendingUploads.size() + ")");
     }
 
     @FXML
@@ -281,13 +453,30 @@ public class ChatController {
     }
 
     private void sendPendingMedia(String caption) {
-        List<MediaPreview> toSend = new ArrayList<>(pendingUploads);
+        sendPendingMedia(new ArrayList<>(pendingUploads), caption);
         clearAllPreviews();
+    }
 
-        for (MediaPreview preview : toSend) {
-            sendMediaFile(preview, caption);
-            caption = ""; // Only add caption to first file
+    private void sendPendingMedia(List<MediaPreview> previewsToSend, String caption) {
+        if (previewsToSend.isEmpty()) return;
+
+        for (int i = 0; i < previewsToSend.size(); i++) {
+            MediaPreview preview = previewsToSend.get(i);
+            // Only add caption to first file
+            String fileCaption = (i == 0) ? caption : null;
+            sendMediaFile(preview, fileCaption);
         }
+
+        // Remove sent previews from the list and UI
+        for (MediaPreview preview : previewsToSend) {
+            pendingUploads.remove(preview);
+            Platform.runLater(() -> {
+                previewContainer.getChildren().remove(preview.getPreviewNode());
+                previewService.cleanupTempFile(preview);
+            });
+        }
+
+        Platform.runLater(this::updatePreviewVisibility);
     }
 
     private void sendMediaFile(MediaPreview preview, String caption) {
