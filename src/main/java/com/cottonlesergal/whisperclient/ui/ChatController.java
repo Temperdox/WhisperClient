@@ -483,7 +483,7 @@ public class ChatController {
     }
 
     private void sendPendingMedia(String caption) {
-        sendPendingMedia(new ArrayList<>(pendingUploads), caption);
+        sendPendingMedia(new ArrayList<>(pendingUploads), caption != null ? caption : "");
     }
 
     private void sendPendingMedia(List<MediaPreview> previewsToSend, String caption) {
@@ -492,12 +492,12 @@ public class ChatController {
         for (int i = 0; i < previewsToSend.size(); i++) {
             MediaPreview preview = previewsToSend.get(i);
             // Only add caption to first file
-            String fileCaption = (i == 0) ? caption : null;
+            String fileCaption = (i == 0 && caption != null && !caption.isEmpty()) ? caption : null;
             sendMediaFile(preview, fileCaption);
         }
 
         // Clear text field after starting send
-        if (!caption.isEmpty()) {
+        if (caption != null && !caption.isEmpty()) {
             Platform.runLater(() -> txtMessage.clear());
         }
     }
@@ -507,35 +507,56 @@ public class ChatController {
 
         previewService.showProgress(preview, "Preparing...");
 
-        // Use HTTP POST instead of WebSocket chunking
+        // Use HTTP POST to send media
         httpMediaService.sendMediaAsync(preview.getFile(), friend.getUsername(), caption)
                 .thenRun(() -> {
                     System.out.println("[ChatController] Media sent successfully via HTTP");
 
                     Platform.runLater(() -> {
-                        previewService.updateProgress(preview, "Sent ✓");
+                        try {
+                            previewService.updateProgress(preview, "Sent ✓");
 
-                        // Create a simple message bubble showing media was sent
-                        ChatMessage mediaMessage = ChatMessage.fromOutgoing(friend.getUsername(),
-                                "📎 Sent: " + preview.getFileName() + " (" + formatFileSize(preview.getFileSize()) + ")");
-                        storage.storeMessage(friend.getUsername(), mediaMessage);
-                        addMessageBubble(mediaMessage);
-                        scrollToBottom();
+                            // Create inline media message for sender to see their own image
+                            String base64Data = encodeFileToBase64(preview.getFile());
+                            String mimeType = guessMimeType(preview.getFileName());
 
-                        // Remove preview after successful send (with delay)
-                        new Thread(() -> {
-                            try {
-                                Thread.sleep(2000); // Show "Sent ✓" for 2 seconds
-                                Platform.runLater(() -> {
-                                    pendingUploads.remove(preview);
-                                    previewContainer.getChildren().remove(preview.getPreviewNode());
-                                    previewService.cleanupTempFile(preview);
-                                    updatePreviewVisibility();
-                                });
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                            }
-                        }).start();
+                            String inlineMediaMessage = String.format("[INLINE_MEDIA:%s:%s:%s:%d:%s]%s",
+                                    java.util.UUID.randomUUID().toString(),
+                                    preview.getFileName(),
+                                    mimeType,
+                                    preview.getFileSize(),
+                                    base64Data,
+                                    caption != null ? caption : "");
+
+                            ChatMessage mediaMessage = ChatMessage.fromOutgoing(friend.getUsername(), inlineMediaMessage);
+                            storage.storeMessage(friend.getUsername(), mediaMessage);
+                            addMessageBubble(mediaMessage);
+                            scrollToBottom();
+
+                            // Remove preview after successful send (with delay)
+                            new Thread(() -> {
+                                try {
+                                    Thread.sleep(2000); // Show "Sent ✓" for 2 seconds
+                                    Platform.runLater(() -> {
+                                        pendingUploads.remove(preview);
+                                        previewContainer.getChildren().remove(preview.getPreviewNode());
+                                        previewService.cleanupTempFile(preview);
+                                        updatePreviewVisibility();
+                                    });
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                            }).start();
+
+                        } catch (Exception e) {
+                            System.err.println("[ChatController] Error displaying sent media: " + e.getMessage());
+                            // Fallback to simple text message
+                            ChatMessage fallbackMessage = ChatMessage.fromOutgoing(friend.getUsername(),
+                                    "📎 Sent: " + preview.getFileName() + " (" + formatFileSize(preview.getFileSize()) + ")");
+                            storage.storeMessage(friend.getUsername(), fallbackMessage);
+                            addMessageBubble(fallbackMessage);
+                            scrollToBottom();
+                        }
                     });
                 })
                 .exceptionally(throwable -> {
@@ -547,6 +568,37 @@ public class ChatController {
                     });
                     return null;
                 });
+    }
+
+    // Helper method to encode file to base64 for sender's display
+    private String encodeFileToBase64(File file) {
+        try {
+            byte[] fileBytes = Files.readAllBytes(file.toPath());
+            return Base64.getEncoder().encodeToString(fileBytes);
+        } catch (Exception e) {
+            System.err.println("[ChatController] Failed to encode file for display: " + e.getMessage());
+            return "";
+        }
+    }
+
+    // Helper method to guess MIME type
+    private String guessMimeType(String fileName) {
+        String extension = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+
+        switch (extension) {
+            case "png": return "image/png";
+            case "jpg": case "jpeg": return "image/jpeg";
+            case "gif": return "image/gif";
+            case "bmp": return "image/bmp";
+            case "webp": return "image/webp";
+            case "mp4": return "video/mp4";
+            case "webm": return "video/webm";
+            case "mov": return "video/quicktime";
+            case "mp3": return "audio/mpeg";
+            case "wav": return "audio/wav";
+            case "ogg": return "audio/ogg";
+            default: return "application/octet-stream";
+        }
     }
 
     // ============== MESSAGE DISPLAY ==============
