@@ -52,6 +52,13 @@ public class MessageStorageUtility {
 
     private void ensureDirectoriesExist() {
         try {
+            // Debug the paths
+            System.out.println("[MessageStorageUtility] Initializing directories:");
+            System.out.println("  USER_HOME: " + USER_HOME);
+            System.out.println("  APP_DATA_DIR: " + APP_DATA_DIR);
+            System.out.println("  MESSAGES_DIR: " + MESSAGES_DIR);
+            System.out.println("  BACKUP_DIR: " + BACKUP_DIR);
+
             // Validate paths before attempting to create directories
             if (MESSAGES_DIR == null || MESSAGES_DIR.trim().isEmpty()) {
                 System.err.println("[MessageStorageUtility] Messages directory path is null or empty");
@@ -63,15 +70,19 @@ public class MessageStorageUtility {
                 return;
             }
 
-            Path messagesPath = Paths.get(MESSAGES_DIR);
-            Path backupPath = Paths.get(BACKUP_DIR);
+            // Create directories using File.mkdirs() which is more reliable than Files.createDirectories()
+            File messagesDir = new File(MESSAGES_DIR);
+            File backupDir = new File(BACKUP_DIR);
 
-            Files.createDirectories(messagesPath);
-            Files.createDirectories(backupPath);
+            if (!messagesDir.exists()) {
+                boolean created = messagesDir.mkdirs();
+                System.out.println("[MessageStorageUtility] Messages directory created: " + created + " at " + messagesDir.getAbsolutePath());
+            }
 
-            System.out.println("[MessageStorageUtility] Created directories:");
-            System.out.println("  Messages: " + messagesPath.toAbsolutePath());
-            System.out.println("  Backups: " + backupPath.toAbsolutePath());
+            if (!backupDir.exists()) {
+                boolean created = backupDir.mkdirs();
+                System.out.println("[MessageStorageUtility] Backup directory created: " + created + " at " + backupDir.getAbsolutePath());
+            }
 
         } catch (Exception e) {
             System.err.println("[MessageStorageUtility] Failed to create directories: " + e.getMessage());
@@ -233,9 +244,18 @@ public class MessageStorageUtility {
      */
     public String createBackup(String backupName) {
         try {
+            // Ensure directories exist before creating backup
+            ensureDirectoriesExist();
+
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String jsonBackupPath = BACKUP_DIR + File.separator +
                     (backupName != null ? backupName + "_" : "backup_") + timestamp + ".json";
+
+            // Ensure backup directory exists
+            File backupDir = new File(BACKUP_DIR);
+            if (!backupDir.exists()) {
+                backupDir.mkdirs();
+            }
 
             Map<String, Object> backup = new HashMap<>();
             backup.put("timestamp", Instant.now().toEpochMilli());
@@ -277,8 +297,17 @@ public class MessageStorageUtility {
      */
     public String createConversationBackup(String username) {
         try {
+            // Ensure directories exist before creating backup
+            ensureDirectoriesExist();
+
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String backupPath = BACKUP_DIR + File.separator + "conversation_" + username + "_" + timestamp + ".json";
+
+            // Ensure backup directory exists
+            File backupDir = new File(BACKUP_DIR);
+            if (!backupDir.exists()) {
+                backupDir.mkdirs();
+            }
 
             Map<String, Object> backup = new HashMap<>();
             backup.put("timestamp", Instant.now().toEpochMilli());
