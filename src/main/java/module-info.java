@@ -13,8 +13,8 @@ module com.cottonlesergal.whisperclient {
     requires java.net.http;
     requires jdk.jsobject;
     requires com.fasterxml.jackson.databind;
-    requires java.desktop;
     requires jdk.httpserver;
+    requires javafx.swing;
 
     opens com.cottonlesergal.whisperclient.ui to javafx.fxml;
 
