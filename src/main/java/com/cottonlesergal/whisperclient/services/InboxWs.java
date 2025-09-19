@@ -4,6 +4,7 @@ import com.cottonlesergal.whisperclient.core.AppCtx;
 import com.cottonlesergal.whisperclient.core.Session;
 import com.cottonlesergal.whisperclient.events.Event;
 import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
+import com.cottonlesergal.whisperclient.ui.MainController;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import javafx.application.Platform;
@@ -41,6 +42,28 @@ public class InboxWs implements WebSocket.Listener {
     // Cleanup timer for chunked messages
     private Timer chunkCleanupTimer;
 
+    // Add this field for auth failure callback
+    private MainController mainController;
+
+    /**
+     * Set reference to MainController for auth failure handling
+     */
+    public void setMainController(MainController controller) {
+        this.mainController = controller;
+    }
+
+    /**
+     * Handle 401 errors by notifying MainController
+     */
+    private void handle401Error(String context) {
+        System.err.println("[InboxWs] 401 error in " + context);
+        if (mainController != null) {
+            Platform.runLater(() -> {
+                mainController.on401Error("InboxWs:" + context);
+            });
+        }
+    }
+
     public void connect(String workerBaseUrl, String username, String jwtBearer) {
         this.workerUrl = workerBaseUrl;
         this.username = username;
@@ -53,6 +76,7 @@ public class InboxWs implements WebSocket.Listener {
 
         if (jwtBearer == null || jwtBearer.isEmpty()) {
             System.err.println("[InboxWs] ERROR: JWT token is null or empty!");
+            handle401Error("missing_token");
             return;
         }
 
@@ -68,6 +92,18 @@ public class InboxWs implements WebSocket.Listener {
                     .whenComplete((webSocket, throwable) -> {
                         if (throwable != null) {
                             System.err.println("[InboxWs] Connection failed: " + throwable.getMessage());
+
+                            // Check if this is a 401 authentication error
+                            String errorMessage = throwable.getMessage();
+                            if (errorMessage != null && (
+                                    errorMessage.contains("401") ||
+                                            errorMessage.contains("Unexpected HTTP response status code 401") ||
+                                            errorMessage.contains("unauthorized"))) {
+
+                                System.err.println("[InboxWs] Detected 401 authentication error");
+                                handle401Error("websocket_handshake");
+                            }
+
                             throwable.printStackTrace();
                             scheduleReconnect();
                         } else {
@@ -80,6 +116,15 @@ public class InboxWs implements WebSocket.Listener {
 
         } catch (Exception e) {
             System.err.println("[InboxWs] Exception during connection: " + e.getMessage());
+
+            // Check if this is a 401 error
+            String errorMessage = e.getMessage();
+            if (errorMessage != null && (
+                    errorMessage.contains("401") ||
+                            errorMessage.contains("unauthorized"))) {
+                handle401Error("connect_exception");
+            }
+
             e.printStackTrace();
             scheduleReconnect();
         }
@@ -211,6 +256,11 @@ public class InboxWs implements WebSocket.Listener {
                     HttpClient client = HttpClient.newHttpClient();
                     HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
 
+                    if (response.statusCode() == 401) {
+                        handle401Error("media_download");
+                        return;
+                    }
+
                     if (response.statusCode() == 200) {
                         // Parse response to get media data
                         ObjectMapper mapper = new ObjectMapper();
@@ -222,31 +272,24 @@ public class InboxWs implements WebSocket.Listener {
                                 messageId, fileName, mimeType, size, base64Data,
                                 caption.isEmpty() ? "" : "\n" + caption);
 
-                        // Create and store the message
-                        ChatMessage chatMessage = new ChatMessage(
-                                messageId, from, to, inlineMediaMessage, "inline-media", false
-                        );
-                        chatMessage.setTimestamp(timestamp);
+                        // Store as a chat message with embedded media
+                        ChatMessage mediaMessage = ChatMessage.fromIncoming(from, inlineMediaMessage);
+                        messageStorage.storeMessage(from, mediaMessage);
 
-                        // Store the message
-                        messageStorage.storeMessage(from, chatMessage);
-
-                        System.out.println("[InboxWs] Auto-downloaded and stored media: " + fileName);
-
-                        // Notify UI on JavaFX thread
+                        // Emit media-inline event for UI handling
                         Platform.runLater(() -> {
                             try {
-                                // Update notification count
-                                notificationManager.incrementNotificationCount(from);
+                                JsonNode mediaEventData = M.createObjectNode()
+                                        .put("fileName", fileName)
+                                        .put("mimeType", mimeType)
+                                        .put("size", size)
+                                        .put("data", base64Data)
+                                        .put("caption", caption);
 
-                                // Show notification
-                                notificationManager.showToast("Media from " + from,
-                                        "📎 " + fileName + " (" + formatFileSize(size) + ")",
-                                        NotificationManager.ToastType.MESSAGE);
-
-                                // Emit event to the event bus for UI components
-                                Event mediaEvent = new Event("media-inline", from, to, timestamp, data);
+                                Event mediaEvent = new Event("media-inline", from, to, timestamp, mediaEventData);
                                 AppCtx.BUS.emit(mediaEvent);
+
+                                System.out.println("[InboxWs] Emitted media-inline event for: " + fileName);
 
                             } catch (Exception e) {
                                 System.err.println("[InboxWs] Error updating UI for media: " + e.getMessage());
@@ -361,6 +404,16 @@ public class InboxWs implements WebSocket.Listener {
     @Override
     public void onError(WebSocket webSocket, Throwable error) {
         System.err.println("[InboxWs] WebSocket error: " + error.getMessage());
+
+        // Check if this is an auth-related error
+        String errorMessage = error.getMessage();
+        if (errorMessage != null && (
+                errorMessage.contains("401") ||
+                        errorMessage.contains("unauthorized") ||
+                        errorMessage.contains("authentication"))) {
+            handle401Error("websocket_error");
+        }
+
         error.printStackTrace();
         isConnected = false;
 
@@ -373,6 +426,12 @@ public class InboxWs implements WebSocket.Listener {
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
         System.out.println("[InboxWs] WebSocket closed. Code: " + statusCode +
                 ", Reason: " + (reason != null ? reason : "none"));
+
+        // Check if close was due to authentication
+        if (statusCode == 1008 || statusCode == 1002) { // Policy violation or protocol error - often auth issues
+            handle401Error("websocket_close_" + statusCode);
+        }
+
         isConnected = false;
 
         // Stop cleanup timer
@@ -393,24 +452,30 @@ public class InboxWs implements WebSocket.Listener {
             System.err.println("[InboxWs] Max reconnection attempts (" + MAX_RECONNECT_ATTEMPTS + ") reached.");
             System.err.println("[InboxWs] Token may have expired. Consider re-authenticating.");
 
-            // Notify UI about authentication failure
-            Platform.runLater(() -> {
-                if (notificationManager != null) {
-                    notificationManager.showErrorNotification("Connection Lost",
-                            "Authentication failed. You may need to sign in again.");
+            // Notify about authentication failure instead of just showing notification
+            handle401Error("max_reconnect_attempts");
+
+            // Continue trying with exponential backoff but notify auth system
+            long delay = Math.min(32000, INITIAL_RECONNECT_DELAY * (long) Math.pow(2, Math.min(reconnectAttempts - 1, 4)));
+            System.out.println("[InboxWs] Scheduling reconnect attempt " + reconnectAttempts + " in " + delay + "ms");
+
+            scheduler.schedule(() -> {
+                if (shouldReconnect && !isConnected) {
+                    System.out.println("[InboxWs] Attempting reconnection...");
+                    reconnectAttempts++;
+                    connect(workerUrl, username, token);
                 }
-            });
+            }, delay, TimeUnit.MILLISECONDS);
+
             return;
         }
 
         reconnectAttempts++;
-        long delay = INITIAL_RECONNECT_DELAY * (long) Math.pow(2, Math.min(reconnectAttempts - 1, 4)); // Exponential backoff, max 32 seconds
-
-        System.out.println("[InboxWs] Scheduling reconnect attempt " + reconnectAttempts +
-                " in " + delay + "ms");
+        long delay = Math.min(32000, INITIAL_RECONNECT_DELAY * (long) Math.pow(2, reconnectAttempts - 1));
+        System.out.println("[InboxWs] Scheduling reconnect attempt " + reconnectAttempts + " in " + delay + "ms");
 
         scheduler.schedule(() -> {
-            if (shouldReconnect && workerUrl != null && username != null && token != null) {
+            if (shouldReconnect && !isConnected) {
                 System.out.println("[InboxWs] Attempting reconnection...");
                 connect(workerUrl, username, token);
             }
@@ -418,21 +483,21 @@ public class InboxWs implements WebSocket.Listener {
     }
 
     /**
-     * Start periodic cleanup of chunked messages
+     * Start cleanup timer for chunked messages
      */
     private void startChunkCleanupTimer() {
         if (chunkCleanupTimer != null) {
             chunkCleanupTimer.cancel();
         }
 
-        chunkCleanupTimer = new Timer("ChunkCleanupTimer", true);
+        chunkCleanupTimer = new Timer("ChunkCleanup", true);
         chunkCleanupTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 try {
                     chunkingService.cleanupOldMessages();
                 } catch (Exception e) {
-                    System.err.println("[InboxWs] Error during chunk cleanup: " + e.getMessage());
+                    System.err.println("[InboxWs] Error in chunk cleanup: " + e.getMessage());
                 }
             }
         }, 30000, 30000); // Clean up every 30 seconds

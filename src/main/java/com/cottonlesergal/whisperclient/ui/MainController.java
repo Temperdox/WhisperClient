@@ -998,8 +998,11 @@ public class MainController {
         Session.token = Config.APP_TOKEN; // Ensure session token is set
         renderMe();
 
-        // Initialize WebSocket connection
+        // ADD THESE TWO LINES:
+        directory.setMainController(this);  // Wire up DirectoryClient 401 handling
+
         connectToInbox();
+        startAutomaticAuthRefresh();
     }
 
     // Debug method for testing connection
