@@ -61,6 +61,12 @@
                     <Button text="🍞" styleClass="round" onAction="#testToastNotifications">
                         <tooltip><Tooltip text="Test Toast Notifications"/></tooltip>
                     </Button>
+                    <Button text="⚡" styleClass="round" onAction="#testRateLimiting">
+                        <tooltip><Tooltip text="Test Rate Limiting"/></tooltip>
+                    </Button>
+                    <Button text="🔄" styleClass="round" onAction="#clearRateLimits">
+                        <tooltip><Tooltip text="Clear Rate Limits"/></tooltip>
+                    </Button>
                     <Button text="🐛" styleClass="round" onAction="#debugConnection">
                         <tooltip><Tooltip text="Debug Connection"/></tooltip>
                     </Button>

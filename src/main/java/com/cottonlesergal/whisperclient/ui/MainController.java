@@ -42,6 +42,7 @@ public class MainController {
     private final CredentialsStorageService credentialsStorage = CredentialsStorageService.getInstance();
     private final MessageStorageService messageStorage = MessageStorageService.getInstance();
     private final NotificationManager notificationManager = NotificationManager.getInstance();
+    private final RateLimiter rateLimiter = RateLimiter.getInstance();
     private final AtomicLong searchSeq = new AtomicLong();
     private InboxWs inbox;
 
@@ -114,39 +115,55 @@ public class MainController {
     }
 
     private void setupEventHandlers() {
-        // === INCOMING MESSAGE HANDLER - THIS WAS MISSING ===
-        AppCtx.BUS.on("chat", ev -> Platform.runLater(() -> {
-            System.out.println("[MainController] Received chat message from: " + ev.from);
-
-            if (ev.data != null) {
-                String messageText = ev.data.path("text").asText("");
-                String messageId = ev.data.path("id").asText("");
-
-                System.out.println("[MainController] Message content: " + messageText);
-
-                // Store the incoming message
-                ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
-                messageStorage.storeMessage(ev.from, incomingMessage);
-
-                // Show toast notification and increment badge count
-                notificationManager.showMessageNotification(ev.from, messageText);
-
-                // Refresh friends list to show notification badges
-                refreshFriendsUI();
-
-                // If we're currently chatting with this person, add to UI immediately and clear badge
-                if (currentChat != null && currentPeer != null &&
-                        currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                    System.out.println("[MainController] Adding message to current chat UI");
-                    currentChat.addMessageBubble(incomingMessage);
-                    currentChat.scrollToBottom();
-
-                    // Clear notification count since user is viewing the chat
-                    notificationManager.clearNotificationCount(ev.from);
-                    refreshFriendsUI();
+        // === INCOMING MESSAGE HANDLER WITH RATE LIMITING ===
+        AppCtx.BUS.on("chat", ev -> {
+            // Check rate limiting first - don't even queue to UI thread if rate limited
+            if (!rateLimiter.allowMessage(ev.from)) {
+                // Message is rate limited - show a notification but don't process
+                if (rateLimiter.getRemainingCooldown(ev.from) > 4000) { // Only show notification at start of cooldown
+                    Platform.runLater(() -> {
+                        notificationManager.showToast("Rate Limited",
+                                ev.from + " is sending messages too quickly. Rate limited for 5 seconds.",
+                                NotificationManager.ToastType.WARNING);
+                    });
                 }
+                return; // Drop the message
             }
-        }));
+
+            // Process message on UI thread only if not rate limited
+            Platform.runLater(() -> {
+                System.out.println("[MainController] Received chat message from: " + ev.from);
+
+                if (ev.data != null) {
+                    String messageText = ev.data.path("text").asText("");
+                    String messageId = ev.data.path("id").asText("");
+
+                    System.out.println("[MainController] Message content: " + messageText);
+
+                    // Store the incoming message
+                    ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
+                    messageStorage.storeMessage(ev.from, incomingMessage);
+
+                    // Show toast notification and increment badge count
+                    notificationManager.showMessageNotification(ev.from, messageText);
+
+                    // Refresh friends list to show notification badges
+                    refreshFriendsUI();
+
+                    // If we're currently chatting with this person, add to UI immediately and clear badge
+                    if (currentChat != null && currentPeer != null &&
+                            currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                        System.out.println("[MainController] Adding message to current chat UI");
+                        currentChat.addMessageBubble(incomingMessage);
+                        currentChat.scrollToBottom();
+
+                        // Clear notification count since user is viewing the chat
+                        notificationManager.clearNotificationCount(ev.from);
+                        refreshFriendsUI();
+                    }
+                }
+            });
+        });
 
         // === SIGNALING HANDLER - FOR WEBRTC ===
         AppCtx.BUS.on("signal", ev -> Platform.runLater(() -> {
@@ -407,6 +424,9 @@ public class MainController {
     @FXML
     private void debugConnection() {
         System.out.println("=== DEBUG CONNECTION STATUS ===");
+
+        // Show rate limiter stats
+        System.out.println("\n" + rateLimiter.getStats());
 
         // Import the debug class
         try {
@@ -784,5 +804,53 @@ public class MainController {
                 }
             }).start();
         });
+    }
+
+    // === RATE LIMITING TEST METHODS ===
+    @FXML
+    private void testRateLimiting() {
+        System.out.println("[MainController] Testing rate limiting...");
+
+        if (!listFriends.getItems().isEmpty()) {
+            UserSummary firstFriend = listFriends.getItems().get(0);
+            String username = firstFriend.getUsername();
+
+            // Simulate rapid messages from this user
+            Platform.runLater(() -> {
+                new Thread(() -> {
+                    System.out.println("Simulating 10 rapid messages from " + username);
+                    for (int i = 1; i <= 10; i++) {
+                        try {
+                            // Create mock event
+                            var mockData = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                                    .put("text", "Spam message " + i)
+                                    .put("id", "test-" + i);
+
+                            var mockEvent = new com.cottonlesergal.whisperclient.events.Event(
+                                    "chat", username, Session.me.getUsername(), System.currentTimeMillis(), mockData
+                            );
+
+                            // Emit the event (will be rate limited)
+                            AppCtx.BUS.emit(mockEvent);
+
+                            Thread.sleep(100); // 10 messages per second - way over the limit
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+
+                    System.out.println("Rate limiting test completed. Check console for rate limit messages.");
+                }).start();
+            });
+        } else {
+            System.out.println("No friends to test rate limiting with");
+        }
+    }
+
+    @FXML
+    private void clearRateLimits() {
+        rateLimiter.clearAllRateLimits();
+        notificationManager.showSuccessNotification("Rate Limits Cleared", "All rate limits have been reset");
+        System.out.println("[MainController] Cleared all rate limits");
     }
 }
