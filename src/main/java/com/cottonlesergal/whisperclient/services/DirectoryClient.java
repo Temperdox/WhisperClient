@@ -161,73 +161,6 @@ public class DirectoryClient {
         } catch (Exception ignored) {}
     }
 
-    /**
-     * Enhanced sendChat method with chunking support for large media messages
-     */
-    public void sendChat(String to, String text) {
-        try {
-            // Check if message needs chunking for large media
-            String[] chunks = chunkingService.splitMessage(text);
-
-            if (chunks.length > 1) {
-                System.out.println("[DirectoryClient] Sending large message in " + chunks.length + " chunks to " + to);
-
-                // Send each chunk
-                for (int i = 0; i < chunks.length; i++) {
-                    String chunk = chunks[i];
-                    System.out.println("[DirectoryClient] Sending chunk " + (i + 1) + "/" + chunks.length +
-                            " (size: " + chunk.length() + " bytes)");
-
-                    try {
-                        sendSingleMessage(to, chunk);
-                        System.out.println("[DirectoryClient] Sent chunk " + (i + 1) + "/" + chunks.length);
-
-                        // Small delay between chunks to avoid overwhelming the server
-                        if (i < chunks.length - 1) {
-                            Thread.sleep(50); // 50ms delay
-                        }
-
-                    } catch (Exception e) {
-                        System.err.println("[DirectoryClient] Failed to send chunk " + (i + 1) + "/" + chunks.length + ": " + e.getMessage());
-                        throw e; // Re-throw to stop sending remaining chunks
-                    }
-                }
-
-                System.out.println("[DirectoryClient] Successfully sent all " + chunks.length + " chunks");
-
-            } else {
-                // Regular message, send normally
-                sendSingleMessage(to, text);
-            }
-
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Failed to send message: " + e.getMessage());
-            throw new RuntimeException("Failed to send message", e);
-        }
-    }
-
-    /**
-     * Send a single message (used for both regular messages and chunks)
-     */
-    private void sendSingleMessage(String to, String text) throws Exception {
-        String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
-
-        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/send"))
-                .header("authorization", "Bearer " + Config.APP_TOKEN)
-                .header("content-type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() != 200) {
-            String errorBody = response.body();
-            System.err.println("[DirectoryClient] Failed to send message. Status: " + response.statusCode() +
-                    ", Body: " + errorBody);
-            throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
-        }
-    }
-
     public List<UserSummary> search(String q) {
         try {
             String url = Config.DIR_WORKER + "/search?q=" +
@@ -281,5 +214,185 @@ public class DirectoryClient {
             e.printStackTrace();
             return false;
         }
+    }
+
+    /**
+     * Enhanced sendChat method with chunking support for large media messages
+     * FIXED: Uses correct /message endpoint and proper error handling
+     */
+    public void sendChat(String to, String text) {
+        try {
+            System.out.println("[DirectoryClient] Attempting to send message to: " + to);
+
+            // First verify we can send to this user
+            if (!areFriends(to)) {
+                throw new RuntimeException("Cannot send message - not friends with " + to);
+            }
+
+            // Check if message needs chunking for large media
+            String[] chunks = chunkingService.splitMessage(text);
+
+            if (chunks.length > 1) {
+                System.out.println("[DirectoryClient] Sending large message in " + chunks.length + " chunks to " + to);
+
+                // Send each chunk sequentially
+                for (int i = 0; i < chunks.length; i++) {
+                    String chunk = chunks[i];
+                    System.out.println("[DirectoryClient] Sending chunk " + (i + 1) + "/" + chunks.length +
+                            " (size: " + chunk.length() + " bytes)");
+
+                    try {
+                        sendSingleMessage(to, chunk);
+                        System.out.println("[DirectoryClient] Sent chunk " + (i + 1) + "/" + chunks.length);
+
+                        // Small delay between chunks to avoid overwhelming the server
+                        if (i < chunks.length - 1) {
+                            Thread.sleep(50); // 50ms delay
+                        }
+
+                    } catch (Exception e) {
+                        System.err.println("[DirectoryClient] Failed to send chunk " + (i + 1) + "/" + chunks.length + ": " + e.getMessage());
+                        throw e; // Re-throw to stop sending remaining chunks
+                    }
+                }
+
+                System.out.println("[DirectoryClient] Successfully sent all " + chunks.length + " chunks");
+
+            } else {
+                // Regular message, send normally
+                sendSingleMessage(to, text);
+                System.out.println("[DirectoryClient] Successfully sent regular message to " + to);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Failed to send message: " + e.getMessage());
+            throw new RuntimeException("Failed to send message: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Send a single message (chunk or regular message) - FIXED to use /message endpoint
+     */
+    private void sendSingleMessage(String to, String text) throws Exception {
+        String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
+
+        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/message"))
+                .header("authorization", "Bearer " + Config.APP_TOKEN)
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+
+        HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            String errorBody = response.body();
+            System.err.println("[DirectoryClient] Failed to send message. Status: " + response.statusCode() +
+                    ", Body: " + errorBody);
+
+            // Provide more specific error messages
+            if (response.statusCode() == 404) {
+                throw new RuntimeException("Message endpoint not found - check server configuration");
+            } else if (response.statusCode() == 403) {
+                throw new RuntimeException("Not friends with " + to + " - cannot send message");
+            } else if (response.statusCode() == 401) {
+                throw new RuntimeException("Authentication failed - check token");
+            } else {
+                throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
+            }
+        }
+    }
+
+    /**
+     * Check if we're friends with a user before sending messages
+     */
+    private boolean areFriends(String username) {
+        try {
+            List<UserSummary> friendsList = friends();
+            boolean isFriend = friendsList.stream()
+                    .anyMatch(friend -> username.equalsIgnoreCase(friend.getUsername()));
+
+            System.out.println("[DirectoryClient] Friendship check for " + username + ": " + isFriend);
+            return isFriend;
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Failed to check friend status: " + e.getMessage());
+            return false; // Assume not friends if we can't check
+        }
+    }
+
+    /**
+     * Debug method to test message sending capability
+     */
+    public void testMessageSending(String to) {
+        try {
+            System.out.println("[DirectoryClient] Testing message sending to: " + to);
+
+            // Check friendship status
+            boolean isFriend = areFriends(to);
+            System.out.println("[DirectoryClient] Are friends with " + to + ": " + isFriend);
+
+            if (!isFriend) {
+                System.err.println("[DirectoryClient] Cannot send test message - not friends with " + to);
+                return;
+            }
+
+            // Try sending a simple test message
+            String testMessage = "Test message: " + System.currentTimeMillis();
+            sendSingleMessage(to, testMessage);
+            System.out.println("[DirectoryClient] Successfully sent test message");
+
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Test message failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Check if friendship exists with detailed logging
+     */
+    public boolean checkFriendshipStatus(String username) {
+        try {
+            System.out.println("[DirectoryClient] Checking detailed friendship status with: " + username);
+
+            List<UserSummary> friendsList = friends();
+            System.out.println("[DirectoryClient] Current friends list:");
+            for (UserSummary friend : friendsList) {
+                System.out.println("  - " + friend.getUsername() + " (" + friend.getDisplay() + ")");
+            }
+
+            boolean isFriend = friendsList.stream()
+                    .anyMatch(friend -> username.equalsIgnoreCase(friend.getUsername()));
+
+            System.out.println("[DirectoryClient] Is " + username + " in friends list: " + isFriend);
+            return isFriend;
+
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Error checking friendship status: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Get connection and authentication status
+     */
+    public String getDebugInfo() {
+        StringBuilder info = new StringBuilder();
+        info.append("DirectoryClient Status:\n");
+        info.append("  Worker URL: ").append(Config.DIR_WORKER).append("\n");
+        info.append("  Token present: ").append(Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()).append("\n");
+        info.append("  Token length: ").append(Config.APP_TOKEN != null ? Config.APP_TOKEN.length() : 0).append("\n");
+
+        try {
+            // Test basic connectivity
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friends"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+            info.append("  Friends endpoint test: ").append(response.statusCode()).append("\n");
+
+        } catch (Exception e) {
+            info.append("  Connection test failed: ").append(e.getMessage()).append("\n");
+        }
+
+        return info.toString();
     }
 }

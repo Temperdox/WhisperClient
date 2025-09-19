@@ -467,16 +467,7 @@ public class ChatController {
             sendMediaFile(preview, fileCaption);
         }
 
-        // Remove sent previews from the list and UI
-        for (MediaPreview preview : previewsToSend) {
-            pendingUploads.remove(preview);
-            Platform.runLater(() -> {
-                previewContainer.getChildren().remove(preview.getPreviewNode());
-                previewService.cleanupTempFile(preview);
-            });
-        }
-
-        Platform.runLater(this::updatePreviewVisibility);
+        // DON'T remove previews immediately - let sendMediaFile handle cleanup after successful send
     }
 
     private void sendMediaFile(MediaPreview preview, String caption) {
@@ -522,11 +513,16 @@ public class ChatController {
                     Platform.runLater(() -> {
                         previewService.updateProgress(preview, "Sent ✓");
 
-                        // Hide progress after 2 seconds
+                        // Remove preview after successful send (with delay)
                         new Thread(() -> {
                             try {
-                                Thread.sleep(2000);
-                                Platform.runLater(() -> previewService.hideProgress(preview));
+                                Thread.sleep(2000); // Show "Sent ✓" for 2 seconds
+                                Platform.runLater(() -> {
+                                    pendingUploads.remove(preview);
+                                    previewContainer.getChildren().remove(preview.getPreviewNode());
+                                    previewService.cleanupTempFile(preview);
+                                    updatePreviewVisibility();
+                                });
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
@@ -535,9 +531,11 @@ public class ChatController {
 
                 } catch (Exception e) {
                     System.err.println("[ChatController] Failed to send media: " + e.getMessage());
+                    e.printStackTrace();
                     Platform.runLater(() -> {
                         previewService.hideProgress(preview);
                         showError("Send Failed", "Could not send " + preview.getFileName() + ": " + e.getMessage());
+                        // Keep preview visible on failure so user can retry
                     });
                 }
             }).start();
@@ -546,6 +544,7 @@ public class ChatController {
             Platform.runLater(() -> {
                 previewService.hideProgress(preview);
                 showError("Processing Failed", "Failed to process " + preview.getFileName() + ": " + throwable.getMessage());
+                // Keep preview visible on failure so user can retry
             });
             return null;
         });
