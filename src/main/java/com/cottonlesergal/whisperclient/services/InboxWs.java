@@ -238,7 +238,7 @@ public class InboxWs implements WebSocket.Listener {
             System.out.println("[InboxWs] Received media notification from " + from +
                     ": " + fileName + " (" + formatFileSize(size) + ") - Auto-downloading...");
 
-            // Apply rate limiting
+            // Apply rate limiting ONCE at the beginning
             if (!rateLimiter.allowMessage(from)) {
                 System.out.println("[InboxWs] Media message from " + from + " was rate limited");
                 return;
@@ -272,13 +272,19 @@ public class InboxWs implements WebSocket.Listener {
                                 messageId, fileName, mimeType, size, base64Data,
                                 caption.isEmpty() ? "" : "\n" + caption);
 
-                        // Store as a chat message with embedded media
+                        // Store as a chat message with embedded media (ONLY ONCE)
                         ChatMessage mediaMessage = ChatMessage.fromIncoming(from, inlineMediaMessage);
                         messageStorage.storeMessage(from, mediaMessage);
 
-                        // Emit media-inline event for UI handling
+                        System.out.println("[InboxWs] Stored media message from " + from);
+
+                        // Update UI on JavaFX thread - but DON'T store again
                         Platform.runLater(() -> {
                             try {
+                                // Update notification count
+                                notificationManager.incrementNotificationCount(from);
+
+                                // Emit media-inline event for UI handling (display only, no storage)
                                 JsonNode mediaEventData = M.createObjectNode()
                                         .put("fileName", fileName)
                                         .put("mimeType", mimeType)
