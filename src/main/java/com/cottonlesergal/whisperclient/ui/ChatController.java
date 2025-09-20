@@ -1,6 +1,7 @@
 package com.cottonlesergal.whisperclient.ui;
 
 import com.cottonlesergal.whisperclient.core.Session;
+import com.cottonlesergal.whisperclient.models.Friend;
 import com.cottonlesergal.whisperclient.models.UserSummary;
 import com.cottonlesergal.whisperclient.services.*;
 import com.cottonlesergal.whisperclient.services.MessageStorageService.ChatMessage;
@@ -1305,8 +1306,31 @@ public class ChatController implements Initializable {
         System.out.println("[ChatController] Auto-saved media to: " + fileName);
     }
 
-    private void scrollToBottom() {
+    public void scrollToBottom() {
         Platform.runLater(() -> messagesScrollPane.setVvalue(1.0));
+    }
+
+    /**
+     * Add bindFriend method for MainController compatibility
+     * This bridges the gap between your Friend model and UserSummary
+     */
+    public void bindFriend(Friend friend) {
+        // Convert Friend to UserSummary for compatibility
+        UserSummary userSummary = new UserSummary(
+                friend.getUsername(),
+                friend.getDisplayName() != null && !friend.getDisplayName().isEmpty() ?
+                        friend.getDisplayName() : friend.getUsername(),
+                friend.getAvatarUrl()
+        );
+
+        setFriend(userSummary);
+    }
+
+    /**
+     * Add clearAllMessages method for MainController compatibility
+     */
+    public void clearAllMessages() {
+        clearMessages();
     }
 
     private void removePreview(MediaPreview preview) {
