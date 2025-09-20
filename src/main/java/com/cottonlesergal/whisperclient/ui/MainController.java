@@ -637,12 +637,17 @@ public class MainController {
 
     // ============== FRIEND MANAGEMENT ==============
 
+
     private void removeFriendAsync(String username) {
-        CompletableFuture.runAsync(() -> {
-            directory.removeFriend(username);
-        }).thenRun(() -> Platform.runLater(() -> {
-            refreshFriends();
-            notificationManager.showSuccessNotification("Friend Removed", "Removed " + username + " from friends");
+        CompletableFuture.supplyAsync(() -> {
+            return directory.removeFriend(username);  // Now returns boolean
+        }).thenAccept(success -> Platform.runLater(() -> {
+            if (success) {
+                refreshFriends();
+                notificationManager.showSuccessNotification("Friend Removed", "Removed " + username + " from friends");
+            } else {
+                notificationManager.showErrorNotification("Failed to remove friend", "Could not remove " + username + " from friends");
+            }
         })).exceptionally(throwable -> {
             Platform.runLater(() -> {
                 notificationManager.showErrorNotification("Failed to remove friend", throwable.getMessage());
