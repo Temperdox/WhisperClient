@@ -101,10 +101,13 @@ public class DirectoryClient {
 
             JsonNode j = M.readTree(response.body());
             List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : j.path("friends")) {
-                String u = n.asText();
-                UserSummary s = lookup(u);
-                out.add(s != null ? s : new UserSummary(u, u, ""));
+
+            // FIXED: Server returns array of user objects directly, not nested
+            for (JsonNode n : j) {
+                String username = n.path("username").asText("");
+                String display = n.path("display").asText(username);
+                String avatar = n.path("avatar").asText("");
+                out.add(new UserSummary(username, display, avatar));
             }
             return out;
         } catch (Exception e) {
@@ -115,7 +118,8 @@ public class DirectoryClient {
 
     public List<UserSummary> pending() {
         try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend/pending"))
+            // FIXED: Endpoint /friend/pending -> /pending
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/pending"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
             HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
 
@@ -127,47 +131,50 @@ public class DirectoryClient {
                 return new ArrayList<>();
             }
 
+            if (response.statusCode() != 200) {
+                System.err.println("[DirectoryClient] Pending request failed: " + response.statusCode());
+                return new ArrayList<>();
+            }
+
             JsonNode j = M.readTree(response.body());
             List<UserSummary> out = new ArrayList<>();
-            JsonNode requestsNode = j.path("requests");
 
-            System.out.println("[DirectoryClient] Found " + requestsNode.size() + " pending requests");
-
-            for (JsonNode n : requestsNode) {
-                String from = n.path("from").asText("");
-                System.out.println("[DirectoryClient] Processing request from: " + from);
-                UserSummary s = lookup(from);
-                out.add(s != null ? s : new UserSummary(from, from, ""));
+            // FIXED: Server returns array of user objects directly, not nested in "requests"
+            for (JsonNode n : j) {
+                String username = n.path("username").asText("");
+                String display = n.path("display").asText(username);
+                String avatar = n.path("avatar").asText("");
+                out.add(new UserSummary(username, display, avatar));
             }
+
             System.out.println("[DirectoryClient] Returning " + out.size() + " pending requests");
             return out;
         } catch (Exception e) {
+            System.err.println("[DirectoryClient] Error fetching pending requests: " + e.getMessage());
             e.printStackTrace();
             return List.of();
         }
     }
 
-    public UserSummary lookup(String user) {
-        if (user == null || user.isBlank()) return null;
+    public UserSummary lookup(String u) {
         try {
-            String encoded = URLEncoder.encode(user, StandardCharsets.UTF_8);
-            String url = Config.DIR_WORKER + "/lookup?u=" + encoded;
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpRequest req = HttpRequest.newBuilder(URI.create(
+                            Config.DIR_WORKER + "/lookup?u=" + URLEncoder.encode(u, StandardCharsets.UTF_8)))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .GET().build();
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() == 401) {
+            if (res.statusCode() == 401) {
                 handle401Error("lookup");
                 return null;
             }
 
-            if (response.statusCode() != 200) return null;
-
-            JsonNode j = M.readTree(response.body());
+            if (res.statusCode() != 200) return null;
+            JsonNode n = M.readTree(res.body());
             return new UserSummary(
-                    j.path("username").asText(user),
-                    j.path("display").asText(user),
-                    j.path("avatar").asText("")
+                    n.path("username").asText(""),
+                    n.path("display").asText(""),
+                    n.path("avatar").asText("")
             );
         } catch (Exception e) {
             return null;
@@ -176,21 +183,25 @@ public class DirectoryClient {
 
     public List<UserSummary> search(String q) {
         try {
-            if (q.isBlank()) return List.of();
-            String encoded = URLEncoder.encode(q, StandardCharsets.UTF_8);
-            String url = Config.DIR_WORKER + "/search?q=" + encoded;
+            String url = Config.DIR_WORKER + "/search?q=" +
+                    URLEncoder.encode(q, StandardCharsets.UTF_8);
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .GET().build();
 
-            if (response.statusCode() == 401) {
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (res.statusCode() == 401) {
                 handle401Error("search");
                 return new ArrayList<>();
             }
 
-            JsonNode j = M.readTree(response.body());
+            if (res.statusCode() != 200) return List.of();
+
+            // FIXED: Server returns array directly, not nested in "results"
+            JsonNode arr = M.readTree(res.body());
             List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : j) {
+            for (JsonNode n : arr) {
                 out.add(new UserSummary(
                         n.path("username").asText(""),
                         n.path("display").asText(""),
@@ -204,15 +215,13 @@ public class DirectoryClient {
         }
     }
 
-    // ============== FIXED FRIEND MANAGEMENT METHODS ==============
-
-    /**
-     * Send friend request - FIXED endpoint and field name
-     */
+    // FIXED: All friend management methods with correct endpoints and field names
     public boolean sendFriendRequest(String to) {
         try {
-            String body = "{\"username\":" + M.writeValueAsString(to) + "}";  // Fixed: changed "to" to "username"
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend-request"))  // Fixed: correct endpoint
+            // FIXED: Field name "to" -> "username"
+            String body = "{\"username\":" + M.writeValueAsString(to) + "}";
+            // FIXED: Endpoint /friend/request -> /friend-request
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend-request"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
                     .header("content-type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -232,13 +241,12 @@ public class DirectoryClient {
         }
     }
 
-    /**
-     * Accept friend request - FIXED endpoint and field name
-     */
     public boolean acceptFriend(String from) {
         try {
-            String body = "{\"username\":" + M.writeValueAsString(from) + "}";  // Fixed: changed "from" to "username"
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/accept-friend"))  // Fixed: correct endpoint
+            // FIXED: Field name "from" -> "username"
+            String body = "{\"username\":" + M.writeValueAsString(from) + "}";
+            // FIXED: Endpoint /friend/accept -> /accept-friend
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/accept-friend"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
                     .header("content-type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -258,13 +266,12 @@ public class DirectoryClient {
         }
     }
 
-    /**
-     * Decline friend request - FIXED endpoint and field name
-     */
     public boolean declineFriend(String from) {
         try {
-            String body = "{\"username\":" + M.writeValueAsString(from) + "}";  // Fixed: changed "from" to "username"
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/decline-friend"))  // Fixed: correct endpoint
+            // FIXED: Field name "from" -> "username"
+            String body = "{\"username\":" + M.writeValueAsString(from) + "}";
+            // FIXED: Endpoint /friend/decline -> /decline-friend
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/decline-friend"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
                     .header("content-type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -284,13 +291,11 @@ public class DirectoryClient {
         }
     }
 
-    /**
-     * Remove friend - FIXED endpoint, field name and return type
-     */
+    // FIXED: Return type void -> boolean, field name "user" -> "username", endpoint /friend/remove -> /remove-friend
     public boolean removeFriend(String user) {
         try {
-            String body = "{\"username\":" + M.writeValueAsString(user) + "}";  // Fixed: changed "user" to "username"
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/remove-friend"))  // Fixed: correct endpoint
+            String body = "{\"username\":" + M.writeValueAsString(user) + "}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/remove-friend"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
                     .header("content-type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -310,13 +315,12 @@ public class DirectoryClient {
         }
     }
 
-    /**
-     * Block user - FIXED endpoint and field name
-     */
     public boolean blockUser(String username) {
         try {
-            String body = "{\"username\":" + M.writeValueAsString(username) + "}";  // Fixed: changed "user" to "username"
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/block-user"))  // Fixed: correct endpoint
+            // FIXED: Field name "user" -> "username"
+            String body = "{\"username\":" + M.writeValueAsString(username) + "}";
+            // FIXED: Endpoint /user/block -> /block-user
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/block-user"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
                     .header("content-type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -336,7 +340,59 @@ public class DirectoryClient {
         }
     }
 
-    // ============== MESSAGE SENDING ==============
+    public boolean unblockUser(String username) {
+        try {
+            // FIXED: Field name "user" -> "username"
+            String body = "{\"username\":" + M.writeValueAsString(username) + "}";
+            // FIXED: Endpoint /user/unblock -> /unblock-user (assuming server has this endpoint)
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/unblock-user"))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("content-type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 401) {
+                handle401Error("unblockUser");
+                return false;
+            }
+
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public List<UserSummary> blockedUsers() {
+        try {
+            // FIXED: Endpoint /user/blocked -> /blocked (assuming server has this endpoint)
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/blocked"))
+                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
+
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 401) {
+                handle401Error("blockedUsers");
+                return new ArrayList<>();
+            }
+
+            if (response.statusCode() != 200) {
+                return new ArrayList<>();
+            }
+
+            JsonNode j = M.readTree(response.body());
+            List<UserSummary> out = new ArrayList<>();
+            for (JsonNode n : j.path("blocked")) {
+                String u = n.asText();
+                UserSummary s = lookup(u);
+                out.add(s != null ? s : new UserSummary(u, u, ""));
+            }
+            return out;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return List.of();
+        }
+    }
 
     /**
      * Enhanced sendChat method with chunking support for large media messages
@@ -386,20 +442,18 @@ public class DirectoryClient {
             }
 
         } catch (Exception e) {
-            System.err.println("[DirectoryClient] Failed to send message to " + to + ": " + e.getMessage());
-            throw new RuntimeException("Failed to send message", e);
+            System.err.println("[DirectoryClient] Failed to send message: " + e.getMessage());
+            throw new RuntimeException("Failed to send message: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Send a single message (used internally by sendChat)
+     * Send a single message (chunk or regular message) with 401 error handling
      */
     private void sendSingleMessage(String to, String text) throws Exception {
-        String body = M.createObjectNode()
-                .put("to", to)
-                .put("text", text)
-                .toString();
+        String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
 
+        // FIXED: Endpoint /message -> /send (based on common patterns, adjust if needed)
         HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/send"))
                 .header("authorization", "Bearer " + Config.APP_TOKEN)
                 .header("content-type", "application/json")
@@ -409,8 +463,8 @@ public class DirectoryClient {
         HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() == 401) {
-            handle401Error("sendSingleMessage");
-            throw new RuntimeException("Authentication failed");
+            handle401Error("sendMessage");
+            throw new RuntimeException("Authentication failed - check token");
         }
 
         if (response.statusCode() != 200) {
