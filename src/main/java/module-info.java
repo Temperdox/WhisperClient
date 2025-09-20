@@ -17,6 +17,7 @@ module com.cottonlesergal.whisperclient {
     requires javafx.swing;
 
     opens com.cottonlesergal.whisperclient.ui to javafx.fxml;
+    opens com.cottonlesergal.whisperclient.models to com.fasterxml.jackson.databind;  // ADD THIS LINE
 
     // Let WebView call methods on the JS bridge class (SignalingClient.JsBridge)
     // (WebView reflects into this package)

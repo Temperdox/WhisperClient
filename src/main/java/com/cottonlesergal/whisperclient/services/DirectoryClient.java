@@ -2,44 +2,305 @@ package com.cottonlesergal.whisperclient.services;
 
 import com.cottonlesergal.whisperclient.models.UserProfile;
 import com.cottonlesergal.whisperclient.models.UserSummary;
-import com.cottonlesergal.whisperclient.ui.MainController;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import javafx.application.Platform;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.http.*;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 public class DirectoryClient {
     private static final ObjectMapper M = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
     private final MessageChunkingService chunkingService = MessageChunkingService.getInstance();
 
-    // Add this field for auth failure callback
-    private MainController mainController;
+    public List<UserSummary> friends() {
+        System.out.println("[DEBUG] Getting friends list...");
+        System.out.println("[DEBUG] DIR_WORKER: " + Config.DIR_WORKER);
+        System.out.println("[DEBUG] Token present: " + (Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()));
 
-    /**
-     * Set reference to MainController for auth failure handling
-     */
-    public void setMainController(MainController controller) {
-        this.mainController = controller;
+        try {
+            String url = Config.DIR_WORKER + "/friends";
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .GET()
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            if (response.statusCode() == 200) {
+                List<UserSummary> result = M.readValue(response.body(), new TypeReference<List<UserSummary>>() {});
+                System.out.println("[DEBUG] Parsed " + result.size() + " friends");
+                for (UserSummary friend : result) {
+                    System.out.println("[DEBUG] Friend: " + friend.getUsername() + " (" + friend.getDisplay() + ")");
+                }
+                return result;
+            } else {
+                System.out.println("[DEBUG] Non-200 response: " + response.statusCode());
+                return List.of();
+            }
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception getting friends: " + e.getMessage());
+            e.printStackTrace();
+            return List.of();
+        }
     }
 
-    /**
-     * Handle 401 errors by notifying MainController
-     */
-    private void handle401Error(String context) {
-        System.err.println("[DirectoryClient] 401 error in " + context);
-        if (mainController != null) {
-            Platform.runLater(() -> {
-                mainController.on401Error("DirectoryClient:" + context);
-            });
+    public List<UserSummary> pending() {
+        System.out.println("[DEBUG] Getting pending requests...");
+
+        try {
+            String url = Config.DIR_WORKER + "/pending";
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .GET()
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            if (response.statusCode() == 200) {
+                List<UserSummary> result = M.readValue(response.body(), new TypeReference<List<UserSummary>>() {});
+                System.out.println("[DEBUG] Parsed " + result.size() + " pending requests");
+                return result;
+            } else {
+                System.out.println("[DEBUG] Non-200 response: " + response.statusCode());
+                return List.of();
+            }
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception getting pending: " + e.getMessage());
+            e.printStackTrace();
+            return List.of();
+        }
+    }
+
+    public UserSummary lookup(String u) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(
+                            Config.DIR_WORKER + "/lookup?u=" + URLEncoder.encode(u, StandardCharsets.UTF_8)))
+                    .GET().build();
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) return null;
+            JsonNode n = M.readTree(res.body());
+            return new UserSummary(
+                    n.path("username").asText(""),
+                    n.path("display").asText(""),
+                    n.path("avatar").asText("")
+            );
+        } catch (Exception e){ return null; }
+    }
+
+    public boolean sendFriendRequest(String username) {
+        System.out.println("[DEBUG] Sending friend request to: " + username);
+        System.out.println("[DEBUG] DIR_WORKER: " + Config.DIR_WORKER);
+        System.out.println("[DEBUG] Token present: " + (Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()));
+
+        try {
+            String url = Config.DIR_WORKER + "/friend-request";
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            String bodyJson = M.writeValueAsString(Map.of("username", username));
+            System.out.println("[DEBUG] Request body: " + bodyJson);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            if (response.statusCode() == 200) {
+                System.out.println("[DEBUG] Friend request sent successfully");
+                return true;
+            } else {
+                System.out.println("[DEBUG] Friend request failed: " + response.statusCode());
+                return false;
+            }
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception sending friend request: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean acceptFriend(String username) {
+        System.out.println("[DEBUG] Accepting friend request from: " + username);
+
+        try {
+            String url = Config.DIR_WORKER + "/accept-friend";
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            String bodyJson = M.writeValueAsString(Map.of("username", username));
+            System.out.println("[DEBUG] Request body: " + bodyJson);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            return response.statusCode() == 200;
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception accepting friend: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean declineFriend(String from) {
+        try {
+            String body = "{\"username\":" + M.writeValueAsString(from) + "}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/decline-friend"))
+                    .header("authorization","Bearer " + Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+            System.out.println("[DirectoryClient] declineFriend -> " + res.statusCode() + " " + res.body());
+            return res.statusCode() == 200;
+        } catch (Exception e){ e.printStackTrace(); return false; }
+    }
+
+    public boolean blockUser(String username) {
+        try {
+            String body = "{\"user\":"+M.writeValueAsString(username)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/block"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    public boolean unblockUser(String username) {
+        try {
+            String body = "{\"user\":"+M.writeValueAsString(username)+"}";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/unblock"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN)
+                    .header("content-type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+        } catch (Exception e){ return false; }
+    }
+
+    public List<UserSummary> blockedUsers() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/user/blocked"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            JsonNode j = M.readTree(client.send(req, HttpResponse.BodyHandlers.ofString()).body());
+            List<UserSummary> out = new ArrayList<>();
+            for (JsonNode n : j.path("blocked")) {
+                String u = n.asText();
+                UserSummary s = lookup(u);
+                out.add(s != null ? s : new UserSummary(u, u, ""));
+            }
+            return out;
+        } catch (Exception e){ e.printStackTrace(); return List.of(); }
+    }
+
+    public boolean removeFriend(String username) {
+        System.out.println("[DEBUG] Removing friend: " + username);
+
+        try {
+            String url = Config.DIR_WORKER + "/remove-friend";
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            String bodyJson = M.writeValueAsString(Map.of("username", username));
+            System.out.println("[DEBUG] Request body: " + bodyJson);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            return response.statusCode() == 200;
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception removing friend: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public List<UserSummary> search(String query) {
+        System.out.println("[DEBUG] Searching for: " + query);
+
+        try {
+            String url = Config.DIR_WORKER + "/search?q=" + java.net.URLEncoder.encode(query, "UTF-8");
+            System.out.println("[DEBUG] Request URL: " + url);
+
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Authorization", "Bearer " + Config.APP_TOKEN)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .GET()
+                    .build();
+
+            System.out.println("[DEBUG] Sending request...");
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("[DEBUG] Response status: " + response.statusCode());
+            System.out.println("[DEBUG] Response body: " + response.body());
+
+            if (response.statusCode() == 200) {
+                List<UserSummary> result = M.readValue(response.body(), new TypeReference<List<UserSummary>>() {});
+                System.out.println("[DEBUG] Found " + result.size() + " search results");
+                return result;
+            } else {
+                System.out.println("[DEBUG] Non-200 response: " + response.statusCode());
+                return List.of();
+            }
+
+        } catch (Exception e) {
+            System.out.println("[DEBUG] Exception searching: " + e.getMessage());
+            e.printStackTrace();
+            return List.of();
         }
     }
 
@@ -47,11 +308,11 @@ public class DirectoryClient {
         try {
             var payload = M.createObjectNode()
                     .put("username", me.getUsername())
-                    .put("pubkey", me.getPubKey()) // Use correct method name
-                    .put("display", (me.getDisplayName() == null || me.getDisplayName().isBlank())
+                    .put("pubkey",   me.getPubKey())
+                    .put("display",  (me.getDisplayName()==null || me.getDisplayName().isBlank())
                             ? me.getUsername() : me.getDisplayName())
                     .put("provider", me.getProvider() == null ? "oauth" : me.getProvider())
-                    .put("avatar", me.getAvatarUrl() == null ? "" : me.getAvatarUrl());
+                    .put("avatar",   me.getAvatarUrl() == null ? "" : me.getAvatarUrl());
 
             HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/register"))
                     .header("authorization", "Bearer " + Config.APP_TOKEN)
@@ -62,340 +323,19 @@ public class DirectoryClient {
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
             int code = res.statusCode();
 
-            if (code == 200) {
-                System.out.println("[DirectoryClient] Successfully registered/updated user: " + me.getUsername());
-                return true;
-            }
+            if (code == 200) return true;
 
             System.err.println("[DirectoryClient] registerOrUpdate failed: " + code + " body=" + res.body());
-
-            // Handle 401 errors
-            if (code == 401) {
-                handle401Error("registerOrUpdate");
-            }
-
             return false;
         } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in registerOrUpdate: " + e.getMessage());
             e.printStackTrace();
             return false;
-        }
-    }
-
-    public List<UserSummary> friends() {
-        try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friends"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("friends");
-                return new ArrayList<>();
-            }
-
-            if (response.statusCode() != 200) {
-                System.err.println("[DirectoryClient] Friends request failed: " + response.statusCode());
-                return new ArrayList<>();
-            }
-
-            JsonNode j = M.readTree(response.body());
-            List<UserSummary> out = new ArrayList<>();
-
-            // FIXED: Server returns array of user objects directly, not nested
-            for (JsonNode n : j) {
-                String username = n.path("username").asText("");
-                String display = n.path("display").asText(username);
-                String avatar = n.path("avatar").asText("");
-                out.add(new UserSummary(username, display, avatar));
-            }
-            return out;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return List.of();
-        }
-    }
-
-    public List<UserSummary> pending() {
-        try {
-            // FIXED: Endpoint /friend/pending -> /pending
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/pending"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("[DirectoryClient] Pending requests response: " + response.statusCode());
-            System.out.println("[DirectoryClient] Pending requests body: " + response.body());
-
-            if (response.statusCode() == 401) {
-                handle401Error("pending");
-                return new ArrayList<>();
-            }
-
-            if (response.statusCode() != 200) {
-                System.err.println("[DirectoryClient] Pending request failed: " + response.statusCode());
-                return new ArrayList<>();
-            }
-
-            JsonNode j = M.readTree(response.body());
-            List<UserSummary> out = new ArrayList<>();
-
-            // FIXED: Server returns array of user objects directly, not nested in "requests"
-            for (JsonNode n : j) {
-                String username = n.path("username").asText("");
-                String display = n.path("display").asText(username);
-                String avatar = n.path("avatar").asText("");
-                out.add(new UserSummary(username, display, avatar));
-            }
-
-            System.out.println("[DirectoryClient] Returning " + out.size() + " pending requests");
-            return out;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Error fetching pending requests: " + e.getMessage());
-            e.printStackTrace();
-            return List.of();
-        }
-    }
-
-    public UserSummary lookup(String u) {
-        try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(
-                            Config.DIR_WORKER + "/lookup?u=" + URLEncoder.encode(u, StandardCharsets.UTF_8)))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .GET().build();
-            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (res.statusCode() == 401) {
-                handle401Error("lookup");
-                return null;
-            }
-
-            if (res.statusCode() != 200) return null;
-            JsonNode n = M.readTree(res.body());
-            return new UserSummary(
-                    n.path("username").asText(""),
-                    n.path("display").asText(""),
-                    n.path("avatar").asText("")
-            );
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    public List<UserSummary> search(String q) {
-        try {
-            String url = Config.DIR_WORKER + "/search?q=" +
-                    URLEncoder.encode(q, StandardCharsets.UTF_8);
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .GET().build();
-
-            HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (res.statusCode() == 401) {
-                handle401Error("search");
-                return new ArrayList<>();
-            }
-
-            if (res.statusCode() != 200) return List.of();
-
-            // FIXED: Server returns array directly, not nested in "results"
-            JsonNode arr = M.readTree(res.body());
-            List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : arr) {
-                out.add(new UserSummary(
-                        n.path("username").asText(""),
-                        n.path("display").asText(""),
-                        n.path("avatar").asText("")
-                ));
-            }
-            return out;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return List.of();
-        }
-    }
-
-    // FIXED: All friend management methods with correct endpoints and field names
-    public boolean sendFriendRequest(String to) {
-        try {
-            // FIXED: Field name "to" -> "username"
-            String body = "{\"username\":" + M.writeValueAsString(to) + "}";
-            // FIXED: Endpoint /friend/request -> /friend-request
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friend-request"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("sendFriendRequest");
-                return false;
-            }
-
-            System.out.println("[DirectoryClient] Friend request response: " + response.statusCode() + " - " + response.body());
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in sendFriendRequest: " + e.getMessage());
-            return false;
-        }
-    }
-
-    public boolean acceptFriend(String from) {
-        try {
-            // FIXED: Field name "from" -> "username"
-            String body = "{\"username\":" + M.writeValueAsString(from) + "}";
-            // FIXED: Endpoint /friend/accept -> /accept-friend
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/accept-friend"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("acceptFriend");
-                return false;
-            }
-
-            System.out.println("[DirectoryClient] Accept friend response: " + response.statusCode() + " - " + response.body());
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in acceptFriend: " + e.getMessage());
-            return false;
-        }
-    }
-
-    public boolean declineFriend(String from) {
-        try {
-            // FIXED: Field name "from" -> "username"
-            String body = "{\"username\":" + M.writeValueAsString(from) + "}";
-            // FIXED: Endpoint /friend/decline -> /decline-friend
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/decline-friend"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("declineFriend");
-                return false;
-            }
-
-            System.out.println("[DirectoryClient] Decline friend response: " + response.statusCode() + " - " + response.body());
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in declineFriend: " + e.getMessage());
-            return false;
-        }
-    }
-
-    // FIXED: Return type void -> boolean, field name "user" -> "username", endpoint /friend/remove -> /remove-friend
-    public boolean removeFriend(String user) {
-        try {
-            String body = "{\"username\":" + M.writeValueAsString(user) + "}";
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/remove-friend"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("removeFriend");
-                return false;
-            }
-
-            System.out.println("[DirectoryClient] Remove friend response: " + response.statusCode() + " - " + response.body());
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in removeFriend: " + e.getMessage());
-            return false;
-        }
-    }
-
-    public boolean blockUser(String username) {
-        try {
-            // FIXED: Field name "user" -> "username"
-            String body = "{\"username\":" + M.writeValueAsString(username) + "}";
-            // FIXED: Endpoint /user/block -> /block-user
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/block-user"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("blockUser");
-                return false;
-            }
-
-            System.out.println("[DirectoryClient] Block user response: " + response.statusCode() + " - " + response.body());
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception in blockUser: " + e.getMessage());
-            return false;
-        }
-    }
-
-    public boolean unblockUser(String username) {
-        try {
-            // FIXED: Field name "user" -> "username"
-            String body = "{\"username\":" + M.writeValueAsString(username) + "}";
-            // FIXED: Endpoint /user/unblock -> /unblock-user (assuming server has this endpoint)
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/unblock-user"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN)
-                    .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("unblockUser");
-                return false;
-            }
-
-            return response.statusCode() == 200;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    public List<UserSummary> blockedUsers() {
-        try {
-            // FIXED: Endpoint /user/blocked -> /blocked (assuming server has this endpoint)
-            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/blocked"))
-                    .header("authorization", "Bearer " + Config.APP_TOKEN).GET().build();
-
-            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 401) {
-                handle401Error("blockedUsers");
-                return new ArrayList<>();
-            }
-
-            if (response.statusCode() != 200) {
-                return new ArrayList<>();
-            }
-
-            JsonNode j = M.readTree(response.body());
-            List<UserSummary> out = new ArrayList<>();
-            for (JsonNode n : j.path("blocked")) {
-                String u = n.asText();
-                UserSummary s = lookup(u);
-                out.add(s != null ? s : new UserSummary(u, u, ""));
-            }
-            return out;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return List.of();
         }
     }
 
     /**
      * Enhanced sendChat method with chunking support for large media messages
+     * FIXED: Uses correct /message endpoint and proper error handling
      */
     public void sendChat(String to, String text) {
         try {
@@ -448,24 +388,18 @@ public class DirectoryClient {
     }
 
     /**
-     * Send a single message (chunk or regular message) with 401 error handling
+     * Send a single message (chunk or regular message) - FIXED to use /message endpoint
      */
     private void sendSingleMessage(String to, String text) throws Exception {
         String body = "{\"to\":" + M.writeValueAsString(to) + ",\"text\":" + M.writeValueAsString(text) + "}";
 
-        // FIXED: Endpoint /message -> /send (based on common patterns, adjust if needed)
-        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/send"))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/message"))
                 .header("authorization", "Bearer " + Config.APP_TOKEN)
                 .header("content-type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
 
         HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() == 401) {
-            handle401Error("sendMessage");
-            throw new RuntimeException("Authentication failed - check token");
-        }
 
         if (response.statusCode() != 200) {
             String errorBody = response.body();
@@ -477,6 +411,8 @@ public class DirectoryClient {
                 throw new RuntimeException("Message endpoint not found - check server configuration");
             } else if (response.statusCode() == 403) {
                 throw new RuntimeException("Not friends with " + to + " - cannot send message");
+            } else if (response.statusCode() == 401) {
+                throw new RuntimeException("Authentication failed - check token");
             } else {
                 throw new RuntimeException("HTTP " + response.statusCode() + ": " + errorBody);
             }
@@ -488,6 +424,7 @@ public class DirectoryClient {
      */
     private boolean areFriends(String username) {
         try {
+            // If we have authentication issues, be more lenient for existing chats
             List<UserSummary> friendsList;
             try {
                 friendsList = friends();
@@ -499,19 +436,90 @@ public class DirectoryClient {
             }
 
             boolean isFriend = friendsList.stream()
-                    .anyMatch(friend -> friend.getUsername().equalsIgnoreCase(username));
+                    .anyMatch(friend -> username.equalsIgnoreCase(friend.getUsername()));
+
+            System.out.println("[DirectoryClient] Friendship check for " + username + ": " + isFriend);
+            return isFriend;
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Failed to check friend status: " + e.getMessage());
+            return true; // Be lenient when we can't check
+        }
+    }
+
+    /**
+     * Debug method to test message sending capability
+     */
+    public void testMessageSending(String to) {
+        try {
+            System.out.println("[DirectoryClient] Testing message sending to: " + to);
+
+            // Check friendship status
+            boolean isFriend = areFriends(to);
+            System.out.println("[DirectoryClient] Are friends with " + to + ": " + isFriend);
 
             if (!isFriend) {
-                System.err.println("[DirectoryClient] User " + username + " is not in friends list");
-                System.out.println("[DirectoryClient] Current friends: " +
-                        friendsList.stream().map(UserSummary::getUsername).toList());
+                System.err.println("[DirectoryClient] Cannot send test message - not friends with " + to);
+                return;
             }
 
+            // Try sending a simple test message
+            String testMessage = "Test message: " + System.currentTimeMillis();
+            sendSingleMessage(to, testMessage);
+            System.out.println("[DirectoryClient] Successfully sent test message");
+
+        } catch (Exception e) {
+            System.err.println("[DirectoryClient] Test message failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Check if friendship exists with detailed logging
+     */
+    public boolean checkFriendshipStatus(String username) {
+        try {
+            System.out.println("[DirectoryClient] Checking detailed friendship status with: " + username);
+
+            List<UserSummary> friendsList = friends();
+            System.out.println("[DirectoryClient] Current friends list:");
+            for (UserSummary friend : friendsList) {
+                System.out.println("  - " + friend.getUsername() + " (" + friend.getDisplay() + ")");
+            }
+
+            boolean isFriend = friendsList.stream()
+                    .anyMatch(friend -> username.equalsIgnoreCase(friend.getUsername()));
+
+            System.out.println("[DirectoryClient] Is " + username + " in friends list: " + isFriend);
             return isFriend;
 
         } catch (Exception e) {
-            System.err.println("[DirectoryClient] Exception checking friendship: " + e.getMessage());
-            return true; // Be lenient on errors
+            System.err.println("[DirectoryClient] Error checking friendship status: " + e.getMessage());
+            e.printStackTrace();
+            return false;
         }
+    }
+
+    /**
+     * Get connection and authentication status
+     */
+    public String getDebugInfo() {
+        StringBuilder info = new StringBuilder();
+        info.append("DirectoryClient Status:\n");
+        info.append("  Worker URL: ").append(Config.DIR_WORKER).append("\n");
+        info.append("  Token present: ").append(Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()).append("\n");
+        info.append("  Token length: ").append(Config.APP_TOKEN != null ? Config.APP_TOKEN.length() : 0).append("\n");
+
+        try {
+            // Test basic connectivity
+            HttpRequest req = HttpRequest.newBuilder(URI.create(Config.DIR_WORKER + "/friends"))
+                    .header("authorization","Bearer "+Config.APP_TOKEN).GET().build();
+            HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
+            info.append("  Friends endpoint test: ").append(response.statusCode()).append("\n");
+
+        } catch (Exception e) {
+            info.append("  Connection test failed: ").append(e.getMessage()).append("\n");
+        }
+
+        return info.toString();
     }
 }

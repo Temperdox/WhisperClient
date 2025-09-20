@@ -23,11 +23,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.Optional;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.UUID;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
@@ -629,26 +625,25 @@ public class MainController {
         Session.token = Config.APP_TOKEN;
         renderMe();
 
-        // CRITICAL: Wire up 401 error handling
-        directory.setMainController(this);
-
         connectToInbox();
     }
 
     // ============== FRIEND MANAGEMENT ==============
 
-
     private void removeFriendAsync(String username) {
-        CompletableFuture.supplyAsync(() -> {
-            return directory.removeFriend(username);  // Now returns boolean
-        }).thenAccept(success -> Platform.runLater(() -> {
-            if (success) {
-                refreshFriends();
-                notificationManager.showSuccessNotification("Friend Removed", "Removed " + username + " from friends");
-            } else {
-                notificationManager.showErrorNotification("Failed to remove friend", "Could not remove " + username + " from friends");
-            }
+        System.out.println("[DEBUG] Starting async removal for: " + username);
+
+        CompletableFuture.runAsync(() -> {
+            System.out.println("[DEBUG] In async thread, removing...");
+            boolean result = directory.removeFriend(username);
+            System.out.println("[DEBUG] Remove result: " + result);
+        }).thenRun(() -> Platform.runLater(() -> {
+            System.out.println("[DEBUG] Back on UI thread, refreshing...");
+            refreshFriends();
+            notificationManager.showSuccessNotification("Friend Removed", "Removed " + username + " from friends");
         })).exceptionally(throwable -> {
+            System.out.println("[DEBUG] Exception in async: " + throwable.getMessage());
+            throwable.printStackTrace();
             Platform.runLater(() -> {
                 notificationManager.showErrorNotification("Failed to remove friend", throwable.getMessage());
             });
@@ -657,17 +652,27 @@ public class MainController {
     }
 
     private void acceptFriendAsync(String username) {
+        System.out.println("[DEBUG] Starting async accept for: " + username);
+
         CompletableFuture.supplyAsync(() -> {
-            return directory.acceptFriend(username);
+            System.out.println("[DEBUG] In async thread, accepting...");
+            boolean result = directory.acceptFriend(username);
+            System.out.println("[DEBUG] Accept result: " + result);
+            return result;
         }).thenAccept(success -> Platform.runLater(() -> {
+            System.out.println("[DEBUG] Back on UI thread, success: " + success);
             if (success) {
+                System.out.println("[DEBUG] Refreshing UI...");
                 refreshPending();
                 refreshFriends();
                 notificationManager.showSuccessNotification("Friend Added", "You are now friends with " + username);
             } else {
+                System.out.println("[DEBUG] Showing error notification");
                 notificationManager.showErrorNotification("Failed to accept friend request", "Could not accept request from " + username);
             }
         })).exceptionally(throwable -> {
+            System.out.println("[DEBUG] Exception in async: " + throwable.getMessage());
+            throwable.printStackTrace();
             Platform.runLater(() -> {
                 notificationManager.showErrorNotification("Failed to accept friend request", throwable.getMessage());
             });
@@ -713,15 +718,27 @@ public class MainController {
     }
 
     private void sendFriendRequestAsync(String username) {
+        System.out.println("[DEBUG] Starting async friend request to: " + username);
+
         CompletableFuture.supplyAsync(() -> {
-            return directory.sendFriendRequest(username);
+            System.out.println("[DEBUG] In async thread, sending request...");
+            boolean result = directory.sendFriendRequest(username);
+            System.out.println("[DEBUG] Request result: " + result);
+            return result;
         }).thenAccept(success -> Platform.runLater(() -> {
+            System.out.println("[DEBUG] Back on UI thread, success: " + success);
             if (success) {
+                System.out.println("[DEBUG] Refreshing UI...");
+                refreshFriends();
+                refreshPending();
                 notificationManager.showSuccessNotification("Request Sent", "Friend request sent to " + username);
             } else {
+                System.out.println("[DEBUG] Showing error notification");
                 notificationManager.showErrorNotification("Failed to send request", "Could not send friend request to " + username);
             }
         })).exceptionally(throwable -> {
+            System.out.println("[DEBUG] Exception in async: " + throwable.getMessage());
+            throwable.printStackTrace();
             Platform.runLater(() -> {
                 notificationManager.showErrorNotification("Failed to send request", throwable.getMessage());
             });
@@ -808,11 +825,16 @@ public class MainController {
     }
 
     private void refreshFriends() {
-        CompletableFuture.supplyAsync(() -> directory.friends())
-                .thenAccept(friends -> Platform.runLater(() -> {
-                    listFriends.getItems().setAll(friends);
-                    System.out.println("[MainController] Refreshed friends list: " + friends.size() + " friends");
-                }));
+        System.out.println("[DEBUG] Refreshing friends list...");
+
+        CompletableFuture.supplyAsync(() -> {
+            System.out.println("[DEBUG] Getting fresh friends list...");
+            return directory.friends();
+        }).thenAccept(friends -> Platform.runLater(() -> {
+            System.out.println("[DEBUG] Got " + friends.size() + " friends, updating UI");
+            listFriends.getItems().setAll(friends);
+            System.out.println("[DEBUG] Friends list updated");
+        }));
     }
 
     private void refreshFriendsUI() {
@@ -822,38 +844,72 @@ public class MainController {
     }
 
     private void refreshPending() {
-        CompletableFuture.supplyAsync(() -> directory.pending())
-                .thenAccept(pending -> Platform.runLater(() -> {
-                    listRequests.getItems().setAll(pending);
-                    System.out.println("[MainController] Refreshed pending requests: " + pending.size() + " requests");
-                }));
+        System.out.println("[DEBUG] Refreshing pending requests...");
+
+        CompletableFuture.supplyAsync(() -> {
+            System.out.println("[DEBUG] Getting fresh pending list...");
+            return directory.pending();
+        }).thenAccept(pending -> Platform.runLater(() -> {
+            System.out.println("[DEBUG] Got " + pending.size() + " pending requests, updating UI");
+            listRequests.getItems().setAll(pending);
+            System.out.println("[DEBUG] Pending list updated");
+        }));
     }
 
-    @FXML private void onAddFriend() {
+    @FXML
+    private void onAddFriend() {
         String q = txtSearch.getText();
+        System.out.println("[DEBUG] Add friend button clicked");
+        System.out.println("[DEBUG] Search text: '" + q + "'");
+        System.out.println("[DEBUG] Search text null: " + (q == null));
+        System.out.println("[DEBUG] Search text blank: " + (q != null && q.isBlank()));
+
         if (q != null && !q.isBlank()) {
-            sendFriendRequestAsync(q.trim());
+            String username = q.trim();
+            System.out.println("[DEBUG] Proceeding with username: '" + username + "'");
+            sendFriendRequestAsync(username);
+        } else {
+            System.out.println("[DEBUG] No username to send request to");
         }
     }
 
-    @FXML private void onAcceptRequest() {
+    @FXML
+    private void onAcceptRequest() {
         var sel = listRequests.getSelectionModel().getSelectedItem();
+        System.out.println("[DEBUG] Accept request button clicked");
+        System.out.println("[DEBUG] Selected item: " + sel);
+        System.out.println("[DEBUG] Requests list size: " + listRequests.getItems().size());
+
         if (sel != null) {
+            System.out.println("[DEBUG] Accepting request from: " + sel.getUsername());
             acceptFriendAsync(sel.getUsername());
+        } else {
+            System.out.println("[DEBUG] No request selected");
         }
     }
 
-    @FXML private void onRemoveFriend() {
+    @FXML
+    private void onRemoveFriend() {
         var sel = listFriends.getSelectionModel().getSelectedItem();
+        System.out.println("[DEBUG] Remove friend button clicked");
+        System.out.println("[DEBUG] Selected item: " + sel);
+        System.out.println("[DEBUG] Friends list size: " + listFriends.getItems().size());
+
         if (sel != null) {
+            System.out.println("[DEBUG] Removing friend: " + sel.getUsername());
             Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
                     "Are you sure you want to remove " + sel.getDisplay() + " as a friend?",
                     ButtonType.YES, ButtonType.NO);
             confirm.showAndWait().ifPresent(response -> {
                 if (response == ButtonType.YES) {
+                    System.out.println("[DEBUG] User confirmed removal");
                     removeFriendAsync(sel.getUsername());
+                } else {
+                    System.out.println("[DEBUG] User cancelled removal");
                 }
             });
+        } else {
+            System.out.println("[DEBUG] No friend selected");
         }
     }
 
@@ -1014,6 +1070,23 @@ public class MainController {
                 });
             }
         }
+        System.out.println("[DEBUG] ===== DEBUG CONNECTION =====");
+        System.out.println("[DEBUG] Config.DIR_WORKER: " + Config.DIR_WORKER);
+        System.out.println("[DEBUG] Config.APP_TOKEN present: " + (Config.APP_TOKEN != null && !Config.APP_TOKEN.isEmpty()));
+        System.out.println("[DEBUG] Config.APP_TOKEN length: " + (Config.APP_TOKEN != null ? Config.APP_TOKEN.length() : 0));
+        System.out.println("[DEBUG] Session.me: " + Session.me);
+        System.out.println("[DEBUG] Session.token: " + (Session.token != null ? "present" : "null"));
+        System.out.println("[DEBUG] DirectoryClient: " + (directory != null ? "present" : "null"));
+
+        System.out.println("[DEBUG] Testing friends list...");
+        List<UserSummary> friends = directory.friends();
+        System.out.println("[DEBUG] Friends result: " + friends.size());
+
+        System.out.println("[DEBUG] Testing pending list...");
+        List<UserSummary> pending = directory.pending();
+        System.out.println("[DEBUG] Pending result: " + pending.size());
+
+        System.out.println("[DEBUG] ===== DEBUG COMPLETE =====");
     }
 
     @FXML
