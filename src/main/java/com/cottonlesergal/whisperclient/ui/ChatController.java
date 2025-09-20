@@ -214,6 +214,8 @@ public class ChatController {
 
     private void deleteCurrentMessage() {
         if (currentRightClickedMessage == null || currentRightClickedNode == null || currentRightClickedContainer == null) {
+            System.err.println("[ChatController] Cannot delete message - missing context information");
+            showError("Delete Error", "Cannot delete message - no message selected.");
             return;
         }
 
@@ -224,25 +226,49 @@ public class ChatController {
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
-                VBox contentContainer = findContentContainer(currentRightClickedContainer);
-                if (contentContainer != null) {
-                    int nodeIndex = contentContainer.getChildren().indexOf(currentRightClickedNode);
-                    contentContainer.getChildren().remove(currentRightClickedNode);
+                try {
+                    VBox contentContainer = findContentContainer(currentRightClickedContainer);
+                    if (contentContainer == null) {
+                        System.err.println("[ChatController] Could not find content container");
+                        showError("Delete Error", "Could not locate message content to delete.");
+                        return;
+                    }
 
-                    if (nodeIndex > 0 && contentContainer.getChildren().size() > nodeIndex - 1) {
-                        Node prevNode = contentContainer.getChildren().get(nodeIndex - 1);
-                        if (prevNode instanceof Region) {
-                            contentContainer.getChildren().remove(prevNode);
+                    // Remove the message node
+                    int nodeIndex = contentContainer.getChildren().indexOf(currentRightClickedNode);
+                    if (nodeIndex >= 0) {
+                        contentContainer.getChildren().remove(currentRightClickedNode);
+
+                        // Remove the spacer before it if it exists
+                        if (nodeIndex > 0 && nodeIndex - 1 < contentContainer.getChildren().size()) {
+                            Node prevNode = contentContainer.getChildren().get(nodeIndex - 1);
+                            if (prevNode instanceof Region) {
+                                contentContainer.getChildren().remove(prevNode);
+                            }
+                        }
+                    } else {
+                        System.err.println("[ChatController] Could not find message node in content container");
+                    }
+
+                    // Remove from tracking
+                    messagesInLastGroup.remove(currentRightClickedMessage);
+
+                    // If this was the only message left, remove the entire container
+                    if (messagesInLastGroup.isEmpty() || contentContainer.getChildren().isEmpty()) {
+                        messagesBox.getChildren().remove(currentRightClickedContainer);
+                        if (currentRightClickedContainer == lastMessageContainer) {
+                            lastMessageContainer = null;
+                            lastDisplayedMessage = null;
+                            messagesInLastGroup.clear();
                         }
                     }
-                }
 
-                messagesInLastGroup.remove(currentRightClickedMessage);
+                    System.out.println("[ChatController] Successfully deleted individual message");
 
-                if (messagesInLastGroup.isEmpty()) {
-                    messagesBox.getChildren().remove(currentRightClickedContainer);
-                    lastMessageContainer = null;
-                    lastDisplayedMessage = null;
+                } catch (Exception e) {
+                    System.err.println("[ChatController] Error during message deletion: " + e.getMessage());
+                    e.printStackTrace();
+                    showError("Delete Error", "Failed to delete message: " + e.getMessage());
                 }
             }
         });
@@ -250,6 +276,8 @@ public class ChatController {
 
     private void deleteCurrentMessageGroup() {
         if (currentRightClickedContainer == null) {
+            System.err.println("[ChatController] Cannot delete message group - no container selected");
+            showError("Delete Error", "Cannot delete message group - no group selected.");
             return;
         }
 
@@ -260,12 +288,21 @@ public class ChatController {
 
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
-                messagesBox.getChildren().remove(currentRightClickedContainer);
+                try {
+                    messagesBox.getChildren().remove(currentRightClickedContainer);
 
-                if (currentRightClickedContainer == lastMessageContainer) {
-                    lastMessageContainer = null;
-                    lastDisplayedMessage = null;
-                    messagesInLastGroup.clear();
+                    if (currentRightClickedContainer == lastMessageContainer) {
+                        lastMessageContainer = null;
+                        lastDisplayedMessage = null;
+                        messagesInLastGroup.clear();
+                    }
+
+                    System.out.println("[ChatController] Successfully deleted message group");
+
+                } catch (Exception e) {
+                    System.err.println("[ChatController] Error during group deletion: " + e.getMessage());
+                    e.printStackTrace();
+                    showError("Delete Error", "Failed to delete message group: " + e.getMessage());
                 }
             }
         });
@@ -534,16 +571,27 @@ public class ChatController {
     }
 
     private VBox findContentContainer(VBox messageContainer) {
-        for (Node child : messageContainer.getChildren()) {
-            if (child instanceof HBox) {
-                HBox hbox = (HBox) child;
-                for (Node hboxChild : hbox.getChildren()) {
-                    if (hboxChild instanceof VBox) {
-                        return (VBox) hboxChild;
+        if (messageContainer == null) {
+            System.err.println("[ChatController] findContentContainer called with null messageContainer");
+            return null;
+        }
+
+        try {
+            for (Node child : messageContainer.getChildren()) {
+                if (child instanceof HBox) {
+                    HBox hbox = (HBox) child;
+                    for (Node hboxChild : hbox.getChildren()) {
+                        if (hboxChild instanceof VBox) {
+                            return (VBox) hboxChild;
+                        }
                     }
                 }
             }
+        } catch (Exception e) {
+            System.err.println("[ChatController] Error finding content container: " + e.getMessage());
+            e.printStackTrace();
         }
+
         return null;
     }
 
