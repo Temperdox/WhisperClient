@@ -536,6 +536,78 @@ public class MainController {
             });
         });
 
+        // === FRIEND MANAGEMENT EVENT HANDLERS ===
+        AppCtx.BUS.on("remove-friend", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received remove-friend event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> {
+                    Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                            "Are you sure you want to remove " + targetUser + " as a friend?",
+                            ButtonType.YES, ButtonType.NO);
+                    confirm.showAndWait().ifPresent(response -> {
+                        if (response == ButtonType.YES) {
+                            System.out.println("[DEBUG] User confirmed removal via context menu");
+                            removeFriendAsync(targetUser);
+                        } else {
+                            System.out.println("[DEBUG] User cancelled removal via context menu");
+                        }
+                    });
+                });
+            }
+        });
+
+        AppCtx.BUS.on("accept-friend", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received accept-friend event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> acceptFriendAsync(targetUser));
+            }
+        });
+
+        AppCtx.BUS.on("decline-friend", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received decline-friend event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> declineFriendAsync(targetUser));
+            }
+        });
+
+        AppCtx.BUS.on("send-friend-request", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received send-friend-request event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> sendFriendRequestAsync(targetUser));
+            }
+        });
+
+        AppCtx.BUS.on("block-user", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received block-user event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> blockUserAsync(targetUser));
+            }
+        });
+
+        AppCtx.BUS.on("open-chat", ev -> {
+            if (ev == null || ev.data == null) return;
+            String targetUser = ev.data.path("targetUser").asText("");
+            System.out.println("[DEBUG] Received open-chat event for: " + targetUser);
+            if (!targetUser.isEmpty()) {
+                Platform.runLater(() -> {
+                    UserSummary user = findUserInFriends(targetUser);
+                    if (user != null) {
+                        openChatWith(user);
+                    }
+                });
+            }
+        });
+
         // === OTHER EVENT HANDLERS (simplified) ===
         AppCtx.BUS.on("signal", ev -> {
             if (ev == null || ev.from == null) return;
