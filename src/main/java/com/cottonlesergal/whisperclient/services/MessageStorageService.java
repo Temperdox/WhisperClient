@@ -288,6 +288,77 @@ public class MessageStorageService {
     }
 
     /**
+     * Clear all messages for a specific user conversation
+     */
+    public void clearMessages(String username) {
+        try {
+            String safeUsername = sanitizeUsername(username);
+            Path messagesDir = getUserDirectory(safeUsername).resolve("messages");
+
+            if (!Files.exists(messagesDir)) {
+                System.out.println("[MessageStorage] No messages directory found for " + safeUsername);
+                return;
+            }
+
+            // Delete all message files for this user
+            List<Path> messageFiles = Files.list(messagesDir)
+                    .filter(path -> path.toString().endsWith(".msg"))
+                    .toList();
+
+            int deletedCount = 0;
+            for (Path messageFile : messageFiles) {
+                try {
+                    Files.delete(messageFile);
+                    deletedCount++;
+                } catch (Exception e) {
+                    System.err.println("Failed to delete message file: " + messageFile + " - " + e.getMessage());
+                }
+            }
+
+            System.out.println("[MessageStorage] Cleared " + deletedCount + " messages for " + safeUsername);
+
+            // Clear from cache if you have any
+            clearConversationFromCache(username);
+
+        } catch (Exception e) {
+            System.err.println("Failed to clear messages for " + username + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Delete a specific message by ID
+     */
+    public boolean deleteMessage(String username, String messageId) {
+        try {
+            String safeUsername = sanitizeUsername(username);
+            Path messagesDir = getUserDirectory(safeUsername).resolve("messages");
+
+            if (!Files.exists(messagesDir)) {
+                return false;
+            }
+
+            // Find and delete the specific message file
+            List<Path> messageFiles = Files.list(messagesDir)
+                    .filter(path -> path.toString().endsWith(".msg"))
+                    .filter(path -> path.getFileName().toString().contains(messageId))
+                    .toList();
+
+            for (Path messageFile : messageFiles) {
+                Files.delete(messageFile);
+                System.out.println("[MessageStorage] Deleted message " + messageId + " for " + safeUsername);
+                return true;
+            }
+
+            return false;
+
+        } catch (Exception e) {
+            System.err.println("Failed to delete message " + messageId + " for " + username + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Get the messages directory path
      */
     private String getMessagesDirectory() {
