@@ -337,13 +337,13 @@ public class InboxWs implements WebSocket.Listener {
 
             System.out.println("[InboxWs] Received chat message from " + from + " (ID: " + messageId + ")");
 
-            // Apply rate limiting
+            // Apply rate limiting ONCE at the beginning
             if (!rateLimiter.allowMessage(from)) {
                 System.out.println("[InboxWs] Message from " + from + " was rate limited");
                 return;
             }
 
-            // Create and store the message
+            // Create and store the message ONCE
             ChatMessage chatMessage = new ChatMessage(
                     messageId, from, to, content, "text", false
             );
@@ -352,15 +352,19 @@ public class InboxWs implements WebSocket.Listener {
             // Store the message
             messageStorage.storeMessage(from, chatMessage);
 
-            // Notify UI on JavaFX thread
+            System.out.println("[InboxWs] Stored chat message from " + from);
+
+            // Update UI on JavaFX thread - but DON'T emit chat event to avoid duplicate handling
             Platform.runLater(() -> {
                 try {
                     // Update notification count
                     notificationManager.incrementNotificationCount(from);
 
-                    // Emit event to the event bus for any UI components that need it
-                    Event chatEvent = new Event("chat", from, to, timestamp, data);
-                    AppCtx.BUS.emit(chatEvent);
+                    // If this is the currently open chat, refresh it to show the new message
+                    // But don't emit a chat event since that causes duplicate storage
+                    if (mainController != null) {
+                        mainController.refreshCurrentChatIfMatches(from);
+                    }
 
                 } catch (Exception e) {
                     System.err.println("[InboxWs] Error updating UI: " + e.getMessage());

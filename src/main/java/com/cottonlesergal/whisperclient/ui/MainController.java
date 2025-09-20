@@ -1399,6 +1399,22 @@ public class MainController {
                 .orElse(null);
     }
 
+
+    /**
+     * Add this method to MainController.java to support direct chat refresh from InboxWs
+     */
+    public void refreshCurrentChatIfMatches(String senderUsername) {
+        synchronized (this) {
+            if (currentChat != null && currentPeer != null &&
+                    currentPeer.getUsername().equalsIgnoreCase(senderUsername)) {
+                System.out.println("[MainController] Refreshing chat for new message from: " + senderUsername);
+                currentChat.refreshConversation();
+                notificationManager.clearNotificationCount(senderUsername);
+                refreshFriendsUI();
+            }
+        }
+    }
+
     /*private void showNotification(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION, message);
         alert.setTitle(title);
