@@ -74,16 +74,201 @@ public class ChatController {
     private final List<ChatMessage> messagesInLastGroup = new ArrayList<>();
     private static final long MESSAGE_GROUP_TIME_MS = 5 * 60 * 1000; // 5 minutes
 
+    // Unified context menu
+    private ContextMenu unifiedContextMenu;
+    private MenuItem deleteThisMessage;
+    private MenuItem deleteMessageGroup;
+    private MenuItem clearHistory;
+    private MenuItem clearPreviews;
+    private MenuItem refreshChat;
+    private MenuItem pasteFile;
+
+    // Context for current right-click
+    private ChatMessage currentRightClickedMessage = null;
+    private VBox currentRightClickedContainer = null;
+    private Node currentRightClickedNode = null;
+
     @FXML
     private void initialize() {
         setupScrollPane();
-        setupContextMenus();
+        setupUnifiedContextMenu();
         setupDragAndDrop();
         setupKeyboardShortcuts();
         setupClipboardPaste();
         setupPreviewContainer();
         setupAttachButton();
         System.out.println("[ChatController] Initialized with HTTP media system");
+    }
+
+    // ============== UNIFIED CONTEXT MENU SYSTEM - FIXED EVENT HANDLING ==============
+
+    private void setupUnifiedContextMenu() {
+        unifiedContextMenu = new ContextMenu();
+
+        // Create all possible menu items
+        deleteThisMessage = new MenuItem("Delete This Message");
+        deleteThisMessage.setOnAction(e -> deleteCurrentMessage());
+
+        deleteMessageGroup = new MenuItem("Delete Message Group");
+        deleteMessageGroup.setOnAction(e -> deleteCurrentMessageGroup());
+
+        clearHistory = new MenuItem("Clear Message History");
+        clearHistory.setOnAction(e -> clearMessageHistory());
+
+        clearPreviews = new MenuItem("Clear All Previews");
+        clearPreviews.setOnAction(e -> clearAllPreviews());
+
+        refreshChat = new MenuItem("Refresh Conversation");
+        refreshChat.setOnAction(e -> refreshConversation());
+
+        pasteFile = new MenuItem("Paste Image/File");
+        pasteFile.setOnAction(e -> handleClipboardPaste());
+
+        // Configure menu behavior
+        unifiedContextMenu.setAutoHide(true);
+        unifiedContextMenu.setHideOnEscape(true);
+
+        // Add click-away listener when menu shows
+        unifiedContextMenu.setOnShowing(e -> {
+            pasteFile.setDisable(!hasImageOrFileInClipboard());
+        });
+
+        unifiedContextMenu.setOnHidden(e -> {
+            // Clean up context when menu closes
+            currentRightClickedMessage = null;
+            currentRightClickedContainer = null;
+            currentRightClickedNode = null;
+        });
+
+        // Set up main chat area context menu
+        messagesBox.setOnContextMenuRequested(e -> {
+            showContextMenuForChatArea(e);
+            e.consume();
+        });
+    }
+
+    private void showContextMenuForIndividualMessage(ContextMenuEvent event, ChatMessage message, Node messageNode, VBox parentContainer) {
+        // Set context for this right-click
+        currentRightClickedMessage = message;
+        currentRightClickedContainer = parentContainer;
+        currentRightClickedNode = messageNode;
+
+        // Clear all items and add relevant ones
+        unifiedContextMenu.getItems().clear();
+        unifiedContextMenu.getItems().addAll(
+                deleteThisMessage,
+                deleteMessageGroup,
+                new SeparatorMenuItem(),
+                clearHistory,
+                clearPreviews,
+                refreshChat,
+                new SeparatorMenuItem(),
+                pasteFile
+        );
+
+        // Show menu at exact mouse location
+        unifiedContextMenu.show(messageNode, event.getScreenX(), event.getScreenY());
+    }
+
+    private void showContextMenuForMessageGroup(ContextMenuEvent event, VBox messageContainer) {
+        // Set context for this right-click
+        currentRightClickedContainer = messageContainer;
+        currentRightClickedMessage = null;
+        currentRightClickedNode = null;
+
+        // Clear all items and add relevant ones (no individual delete)
+        unifiedContextMenu.getItems().clear();
+        unifiedContextMenu.getItems().addAll(
+                deleteMessageGroup,
+                new SeparatorMenuItem(),
+                clearHistory,
+                clearPreviews,
+                refreshChat,
+                new SeparatorMenuItem(),
+                pasteFile
+        );
+
+        // Show menu at exact mouse location
+        unifiedContextMenu.show(messageContainer, event.getScreenX(), event.getScreenY());
+    }
+
+    private void showContextMenuForChatArea(ContextMenuEvent event) {
+        // Set context for this right-click (general chat area)
+        currentRightClickedMessage = null;
+        currentRightClickedContainer = null;
+        currentRightClickedNode = null;
+
+        // Clear all items and add general ones (no deletion options)
+        unifiedContextMenu.getItems().clear();
+        unifiedContextMenu.getItems().addAll(
+                clearHistory,
+                clearPreviews,
+                refreshChat,
+                new SeparatorMenuItem(),
+                pasteFile
+        );
+
+        // Show menu at exact mouse location
+        unifiedContextMenu.show(messagesBox, event.getScreenX(), event.getScreenY());
+    }
+
+    private void deleteCurrentMessage() {
+        if (currentRightClickedMessage == null || currentRightClickedNode == null || currentRightClickedContainer == null) {
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Delete Message");
+        confirm.setHeaderText("Delete this message?");
+        confirm.setContentText("This will remove only this specific message from the group.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                VBox contentContainer = findContentContainer(currentRightClickedContainer);
+                if (contentContainer != null) {
+                    int nodeIndex = contentContainer.getChildren().indexOf(currentRightClickedNode);
+                    contentContainer.getChildren().remove(currentRightClickedNode);
+
+                    if (nodeIndex > 0 && contentContainer.getChildren().size() > nodeIndex - 1) {
+                        Node prevNode = contentContainer.getChildren().get(nodeIndex - 1);
+                        if (prevNode instanceof Region) {
+                            contentContainer.getChildren().remove(prevNode);
+                        }
+                    }
+                }
+
+                messagesInLastGroup.remove(currentRightClickedMessage);
+
+                if (messagesInLastGroup.isEmpty()) {
+                    messagesBox.getChildren().remove(currentRightClickedContainer);
+                    lastMessageContainer = null;
+                    lastDisplayedMessage = null;
+                }
+            }
+        });
+    }
+
+    private void deleteCurrentMessageGroup() {
+        if (currentRightClickedContainer == null) {
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Delete Message Group");
+        confirm.setHeaderText("Delete entire message group?");
+        confirm.setContentText("This will remove all messages in this group.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                messagesBox.getChildren().remove(currentRightClickedContainer);
+
+                if (currentRightClickedContainer == lastMessageContainer) {
+                    lastMessageContainer = null;
+                    lastDisplayedMessage = null;
+                    messagesInLastGroup.clear();
+                }
+            }
+        });
     }
 
     // ============== SETUP METHODS ==============
@@ -97,62 +282,6 @@ public class ChatController {
         scrollPane.setFitToWidth(true);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-    }
-
-    private void setupContextMenus() {
-        ContextMenu chatAreaMenu = new ContextMenu();
-        MenuItem clearHistory = new MenuItem("Clear Message History");
-        clearHistory.setOnAction(e -> clearMessageHistory());
-        MenuItem clearPreviews = new MenuItem("Clear All Previews");
-        clearPreviews.setOnAction(e -> clearAllPreviews());
-        MenuItem refreshChat = new MenuItem("Refresh Conversation");
-        refreshChat.setOnAction(e -> refreshConversation());
-        MenuItem pasteFile = new MenuItem("Paste Image/File");
-        pasteFile.setOnAction(e -> handleClipboardPaste());
-
-        chatAreaMenu.getItems().addAll(clearHistory, new SeparatorMenuItem(), clearPreviews, refreshChat, new SeparatorMenuItem(), pasteFile);
-
-        chatAreaMenu.setOnShowing(e -> {
-            pasteFile.setDisable(!hasImageOrFileInClipboard());
-        });
-
-        messagesBox.setOnContextMenuRequested(event -> {
-            // Calculate dynamic positioning - place menu below deletion buttons
-            double baseY = event.getScreenY();
-            double offsetY = calculateContextMenuOffset();
-
-            chatAreaMenu.show(messagesBox, event.getScreenX(), baseY + offsetY);
-            event.consume();
-        });
-
-        ContextMenu inputContextMenu = new ContextMenu();
-        MenuItem pasteText = new MenuItem("Paste Text");
-        pasteText.setOnAction(e -> {
-            Clipboard clipboard = Clipboard.getSystemClipboard();
-            if (clipboard.hasString()) {
-                txtMessage.insertText(txtMessage.getCaretPosition(), clipboard.getString());
-            }
-        });
-
-        MenuItem pasteFileItem = new MenuItem("Paste Image/File");
-        pasteFileItem.setOnAction(e -> handleClipboardPaste());
-
-        inputContextMenu.getItems().addAll(pasteText, pasteFileItem);
-        txtMessage.setContextMenu(inputContextMenu);
-    }
-
-    private double calculateContextMenuOffset() {
-        // Calculate offset based on how many deletion options would be shown
-        int deletionButtonCount = 0;
-
-        if (lastMessageContainer != null) {
-            deletionButtonCount = 1; // "Delete Message Group"
-            if (messagesInLastGroup.size() > 1) {
-                deletionButtonCount = 2; // + "Delete This Message"
-            }
-        }
-
-        return deletionButtonCount * 30;
     }
 
     private void setupDragAndDrop() {
@@ -339,7 +468,7 @@ public class ChatController {
         if (message.getContent().startsWith("[INLINE_MEDIA:")) {
             Node mediaContent = createInlineMediaContent(message, message.isFromMe());
             mediaContent.setStyle("-fx-padding: 2 0;");
-            createIndividualMessageContextMenu(mediaContent, message, lastMessageContainer);
+            setupMessageContextMenu(mediaContent, message, lastMessageContainer);
             contentContainer.getChildren().add(mediaContent);
         } else {
             Label textLabel = createConsolidatedTextLabel(message.getContent(), message.isFromMe(), message);
@@ -371,7 +500,7 @@ public class ChatController {
         if (message.getContent().startsWith("[INLINE_MEDIA:")) {
             Node mediaContent = createInlineMediaContent(message, isFromMe);
             mediaContent.setStyle("-fx-padding: 2 0;");
-            createIndividualMessageContextMenu(mediaContent, message, messageContainer);
+            setupMessageContextMenu(mediaContent, message, messageContainer);
             contentContainer.getChildren().add(mediaContent);
         } else {
             Label textLabel = createConsolidatedTextLabel(message.getContent(), isFromMe, message);
@@ -385,9 +514,23 @@ public class ChatController {
 
         messageContainer.getChildren().add(contentWrapper);
 
-        createMessageGroupContextMenu(messageContainer, message);
+        setupGroupContextMenu(messageContainer);
 
         return messageContainer;
+    }
+
+    private void setupMessageContextMenu(Node messageNode, ChatMessage message, VBox parentContainer) {
+        messageNode.setOnContextMenuRequested(e -> {
+            showContextMenuForIndividualMessage(e, message, messageNode, parentContainer);
+            e.consume();
+        });
+    }
+
+    private void setupGroupContextMenu(VBox messageContainer) {
+        messageContainer.setOnContextMenuRequested(e -> {
+            showContextMenuForMessageGroup(e, messageContainer);
+            e.consume();
+        });
     }
 
     private VBox findContentContainer(VBox messageContainer) {
@@ -404,45 +547,6 @@ public class ChatController {
         return null;
     }
 
-    // ============== DYNAMIC CONTEXT MENU POSITIONING ==============
-
-    private void createMessageGroupContextMenu(VBox messageContainer, ChatMessage firstMessage) {
-        ContextMenu contextMenu = new ContextMenu();
-
-        MenuItem deleteGroup = new MenuItem("Delete Message Group");
-        deleteGroup.setOnAction(e -> deleteMessageGroup(messageContainer));
-
-        contextMenu.getItems().add(deleteGroup);
-
-        messageContainer.setOnContextMenuRequested(e -> {
-            double baseY = e.getScreenY();
-            double offsetY = 30; // Base offset for "Delete Message Group" button
-
-            contextMenu.show(messageContainer, e.getScreenX(), baseY + offsetY);
-            e.consume();
-        });
-    }
-
-    private void createIndividualMessageContextMenu(Node messageNode, ChatMessage message, VBox parentContainer) {
-        ContextMenu contextMenu = new ContextMenu();
-
-        MenuItem deleteThis = new MenuItem("Delete This Message");
-        deleteThis.setOnAction(e -> deleteIndividualMessage(messageNode, message, parentContainer));
-
-        MenuItem deleteGroup = new MenuItem("Delete Message Group");
-        deleteGroup.setOnAction(e -> deleteMessageGroup(parentContainer));
-
-        contextMenu.getItems().addAll(deleteThis, deleteGroup);
-
-        messageNode.setOnContextMenuRequested(e -> {
-            double baseY = e.getScreenY();
-            double offsetY = 60; // Offset for both deletion buttons
-
-            contextMenu.show(messageNode, e.getScreenX(), baseY + offsetY);
-            e.consume();
-        });
-    }
-
     private Label createConsolidatedTextLabel(String text, boolean isFromMe, ChatMessage message) {
         Label textLabel = new Label(text);
         textLabel.setWrapText(true);
@@ -454,60 +558,9 @@ public class ChatController {
             textLabel.setStyle("-fx-text-fill: #dcddde; -fx-font-size: 14px; -fx-padding: 2 0;");
         }
 
-        createIndividualMessageContextMenu(textLabel, message, lastMessageContainer);
+        setupMessageContextMenu(textLabel, message, lastMessageContainer);
 
         return textLabel;
-    }
-
-    private void deleteIndividualMessage(Node messageNode, ChatMessage message, VBox parentContainer) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Delete Message");
-        confirm.setHeaderText("Delete this message?");
-        confirm.setContentText("This will remove only this specific message from the group.");
-
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                VBox contentContainer = findContentContainer(parentContainer);
-                if (contentContainer != null) {
-                    int nodeIndex = contentContainer.getChildren().indexOf(messageNode);
-                    contentContainer.getChildren().remove(messageNode);
-
-                    if (nodeIndex > 0 && contentContainer.getChildren().size() > nodeIndex - 1) {
-                        Node prevNode = contentContainer.getChildren().get(nodeIndex - 1);
-                        if (prevNode instanceof Region) {
-                            contentContainer.getChildren().remove(prevNode);
-                        }
-                    }
-                }
-
-                messagesInLastGroup.remove(message);
-
-                if (messagesInLastGroup.isEmpty()) {
-                    messagesBox.getChildren().remove(parentContainer);
-                    lastMessageContainer = null;
-                    lastDisplayedMessage = null;
-                }
-            }
-        });
-    }
-
-    private void deleteMessageGroup(VBox messageContainer) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Delete Message Group");
-        confirm.setHeaderText("Delete entire message group?");
-        confirm.setContentText("This will remove all messages in this group.");
-
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                messagesBox.getChildren().remove(messageContainer);
-
-                if (messageContainer == lastMessageContainer) {
-                    lastMessageContainer = null;
-                    lastDisplayedMessage = null;
-                    messagesInLastGroup.clear();
-                }
-            }
-        });
     }
 
     private HBox createMessageHeader(ChatMessage message, boolean isFromMe) {
