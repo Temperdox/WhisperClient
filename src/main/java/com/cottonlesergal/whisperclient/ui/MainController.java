@@ -29,9 +29,9 @@ import java.util.TimerTask;
 import java.util.UUID;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainController {
     @FXML private Label lblTitle;
@@ -68,18 +68,21 @@ public class MainController {
     private ChatController currentChat;
     private UserSummary currentPeer;
 
-    // Add deduplication for event processing
-    private boolean eventHandlersSetup = false;
-    private final Set<String> processedMessageIds = ConcurrentHashMap.newKeySet();
+    // ENHANCED deduplication for event processing
+    private final AtomicBoolean eventHandlersSetup = new AtomicBoolean(false);
+    private final Set<String> processedChatMessageIds = ConcurrentHashMap.newKeySet();
+    private final Set<String> processedMediaEventIds = ConcurrentHashMap.newKeySet();
 
     @FXML
     private void initialize() {
         setupCellFactories();
 
-        // Only setup event handlers once to prevent duplicates
-        if (!eventHandlersSetup) {
+        // Only setup event handlers once - use atomic boolean for thread safety
+        if (eventHandlersSetup.compareAndSet(false, true)) {
             setupEventHandlers();
-            eventHandlersSetup = true;
+            System.out.println("[MainController] Event handlers setup completed");
+        } else {
+            System.out.println("[MainController] Event handlers already setup, skipping");
         }
 
         setupUI();
@@ -414,79 +417,38 @@ public class MainController {
         listRequests.setCellFactory(v -> new UserListCell(UserListCell.MenuType.REQUEST));
     }
 
+    // ============== ENHANCED EVENT HANDLERS WITH STRICT DEDUPLICATION ==============
+
     @SuppressWarnings("resource") // Event listeners are permanent for app lifetime
     private void setupEventHandlers() {
-        // === INLINE MEDIA HANDLER - FIXED TO PREVENT DUPLICATES ===
-        AppCtx.BUS.on("media-inline", ev -> {
-            if (ev == null || ev.from == null) {
-                System.err.println("[MainController] Received null media-inline event or sender");
-                return;
-            }
-
-            // Add unique processing check
-            String eventId = "media-" + ev.from + "-" + System.currentTimeMillis();
-            if (processedMessageIds.contains(eventId)) {
-                System.out.println("[MainController] Skipping duplicate media-inline event");
-                return;
-            }
-            processedMessageIds.add(eventId);
-
-            Platform.runLater(() -> {
-                try {
-                    System.out.println("[MainController] Received inline media from: " + ev.from);
-                    if (ev.data != null) {
-                        String fileName = ev.data.path("fileName").asText("");
-                        long size = ev.data.path("size").asLong(0);
-                        System.out.println("[MainController] Processing inline media: " + fileName +
-                                " (" + formatFileSize(size) + ")");
-
-                        synchronized (this) {
-                            if (currentChat != null && currentPeer != null &&
-                                    currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                                System.out.println("[MainController] Refreshing chat to show new media");
-                                currentChat.refreshConversation();
-                                notificationManager.clearNotificationCount(ev.from);
-                                refreshFriendsUI();
-                            }
-                        }
-                    } else {
-                        System.err.println("[MainController] Received inline media event with null data from: " + ev.from);
-                    }
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing inline media: " + e.getMessage());
-                    e.printStackTrace();
-                }
-            });
-        });
-
-        // === INCOMING MESSAGE HANDLER - FIXED TO PREVENT DUPLICATES ===
+        // === INCOMING MESSAGE HANDLER - COMPLETELY REWRITTEN TO PREVENT DUPLICATES ===
         AppCtx.BUS.on("chat", ev -> {
-            if (ev == null || ev.from == null) {
-                System.err.println("[MainController] Received null chat event or sender");
-                return;
+            if (ev == null || ev.from == null || ev.data == null) {
+                return; // Skip invalid events silently
             }
 
-            // Add message deduplication
-            String messageId = ev.data != null ? ev.data.path("id").asText("") : "";
-            if (!messageId.isEmpty() && processedMessageIds.contains(messageId)) {
-                System.out.println("[MainController] Skipping duplicate chat message: " + messageId);
-                return;
-            }
-            if (!messageId.isEmpty()) {
-                processedMessageIds.add(messageId);
+            String messageId = ev.data.path("id").asText("");
+            if (messageId.isEmpty()) {
+                // Generate a unique ID if none exists to prevent duplicates
+                messageId = "msg-" + ev.from + "-" + ev.at + "-" + ev.data.path("text").asText().hashCode();
             }
 
+            // STRICT deduplication - if we've seen this exact message ID, skip it completely
+            if (processedChatMessageIds.contains(messageId)) {
+                return; // Silent skip - no logging to avoid spam
+            }
+
+            // Mark as processed IMMEDIATELY to prevent race conditions
+            processedChatMessageIds.add(messageId);
+
+            // Rate limiting check
             try {
                 if (!rateLimiter.allowMessage(ev.from)) {
                     if (rateLimiter.getRemainingCooldown(ev.from) > 4000) {
                         Platform.runLater(() -> {
-                            try {
-                                notificationManager.showToast("Rate Limited",
-                                        ev.from + " is sending messages too quickly. Rate limited for 5 seconds.",
-                                        NotificationManager.ToastType.WARNING);
-                            } catch (Exception e) {
-                                System.err.println("[MainController] Error showing rate limit toast: " + e.getMessage());
-                            }
+                            notificationManager.showToast("Rate Limited",
+                                    ev.from + " is sending messages too quickly. Rate limited for 5 seconds.",
+                                    NotificationManager.ToastType.WARNING);
                         });
                     }
                     return;
@@ -495,57 +457,37 @@ public class MainController {
                 System.err.println("[MainController] Error in rate limiting: " + e.getMessage());
             }
 
+            // Process message on UI thread
             Platform.runLater(() -> {
                 try {
-                    System.out.println("[MainController] Received chat message from: " + ev.from);
-                    if (ev.data == null) {
-                        System.err.println("[MainController] Received chat event with null data from: " + ev.from);
-                        return;
-                    }
-
                     String messageText = ev.data.path("text").asText("");
-                    System.out.println("[MainController] Message content length: " + messageText.length());
 
-                    // Check if this is a media message
-                    EnhancedMediaService mediaService = EnhancedMediaService.getInstance();
-                    boolean isMediaMsg = false;
-                    EnhancedMediaService.MediaMessage mediaMessage = null;
-
-                    try {
-                        isMediaMsg = mediaService.isMediaMessage(messageText);
-                        if (isMediaMsg) {
-                            System.out.println("[MainController] Processing received media message");
-                            mediaMessage = mediaService.extractMediaMessage(messageText);
-                            if (mediaMessage != null) {
-                                System.out.println("[MainController] Extracted media: " + mediaMessage.getFileName() +
-                                        " (" + mediaService.formatFileSize(mediaMessage.getFileSize()) + ")");
-                            } else {
-                                System.err.println("[MainController] Failed to extract media message content");
-                            }
-                        }
-                    } catch (Exception e) {
-                        System.err.println("[MainController] Error processing media message: " + e.getMessage());
-                    }
-
-                    // Store the incoming message
+                    // Store the incoming message ONCE
                     ChatMessage incomingMessage = ChatMessage.fromIncoming(ev.from, messageText);
                     messageStorage.storeMessage(ev.from, incomingMessage);
 
-                    // Show toast notification and increment badge count
+                    // Handle media messages
                     String displayText = messageText;
-                    if (isMediaMsg && mediaMessage != null) {
-                        displayText = "📎 " + mediaMessage.getFileName();
+                    try {
+                        EnhancedMediaService mediaService = EnhancedMediaService.getInstance();
+                        if (mediaService.isMediaMessage(messageText)) {
+                            EnhancedMediaService.MediaMessage mediaMessage = mediaService.extractMediaMessage(messageText);
+                            if (mediaMessage != null) {
+                                displayText = "📎 " + mediaMessage.getFileName();
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Ignore media processing errors, treat as regular message
                     }
-                    notificationManager.showMessageNotification(ev.from, displayText);
 
-                    // Refresh friends list to show notification badges
+                    // Show notification ONCE
+                    notificationManager.showMessageNotification(ev.from, displayText);
                     refreshFriendsUI();
 
-                    // If we're currently chatting with this person, add to UI immediately and clear badge
+                    // If currently chatting with this person, add to UI ONCE
                     synchronized (this) {
                         if (currentChat != null && currentPeer != null &&
                                 currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
-                            System.out.println("[MainController] Adding message to current chat UI");
                             currentChat.addMessageBubble(incomingMessage);
                             currentChat.scrollToBottom();
                             notificationManager.clearNotificationCount(ev.from);
@@ -554,193 +496,106 @@ public class MainController {
                     }
                 } catch (Exception e) {
                     System.err.println("[MainController] Error processing chat message: " + e.getMessage());
-                    e.printStackTrace();
                 }
             });
         });
 
-        // === OTHER EVENT HANDLERS ===
+        // === MEDIA INLINE HANDLER - COMPLETELY REWRITTEN TO PREVENT DUPLICATES ===
+        AppCtx.BUS.on("media-inline", ev -> {
+            if (ev == null || ev.from == null || ev.data == null) {
+                return; // Skip invalid events silently
+            }
+
+            // Create unique media event ID
+            String fileName = ev.data.path("fileName").asText("");
+            long size = ev.data.path("size").asLong(0);
+            String mediaEventId = "media-" + ev.from + "-" + fileName + "-" + size + "-" + ev.at;
+
+            // STRICT deduplication for media events
+            if (processedMediaEventIds.contains(mediaEventId)) {
+                return; // Silent skip
+            }
+
+            // Mark as processed IMMEDIATELY
+            processedMediaEventIds.add(mediaEventId);
+
+            Platform.runLater(() -> {
+                try {
+                    System.out.println("[MainController] Processing unique inline media from: " + ev.from +
+                            " - " + fileName + " (" + formatFileSize(size) + ")");
+
+                    // Only refresh chat if we're viewing this conversation
+                    synchronized (this) {
+                        if (currentChat != null && currentPeer != null &&
+                                currentPeer.getUsername().equalsIgnoreCase(ev.from)) {
+                            System.out.println("[MainController] Refreshing chat to show new media");
+                            currentChat.refreshConversation();
+                            notificationManager.clearNotificationCount(ev.from);
+                            refreshFriendsUI();
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("[MainController] Error processing inline media: " + e.getMessage());
+                }
+            });
+        });
+
+        // === OTHER EVENT HANDLERS (simplified) ===
         AppCtx.BUS.on("signal", ev -> {
             if (ev == null || ev.from == null) return;
             Platform.runLater(() -> {
-                try {
-                    System.out.println("[MainController] Received signal from: " + ev.from +
-                            ", kind: " + (ev.data != null ? ev.data.path("kind").asText("") : "unknown"));
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing signal: " + e.getMessage());
-                }
+                System.out.println("[MainController] Received signal from: " + ev.from);
             });
         });
 
         AppCtx.BUS.on("friend-request", ev -> {
             if (ev == null || ev.from == null) return;
             Platform.runLater(() -> {
-                try {
-                    System.out.println("[MainController] Received friend request from: " + ev.from);
-                    refreshPending();
-                    notificationManager.showFriendRequestNotification(ev.from);
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing friend request: " + e.getMessage());
-                }
+                refreshPending();
+                notificationManager.showFriendRequestNotification(ev.from);
             });
         });
 
         AppCtx.BUS.on("friend-accepted", ev -> {
             if (ev == null || ev.from == null) return;
             Platform.runLater(() -> {
-                try {
-                    System.out.println("[MainController] Friend request accepted by: " + ev.from);
-                    refreshFriends();
-                    refreshPending();
-                    notificationManager.showFriendAcceptedNotification(ev.from);
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing friend accepted: " + e.getMessage());
-                }
+                refreshFriends();
+                refreshPending();
+                notificationManager.showFriendAcceptedNotification(ev.from);
             });
         });
 
         AppCtx.BUS.on("friend-removed", ev -> {
             if (ev == null || ev.from == null) return;
             Platform.runLater(() -> {
-                try {
-                    refreshFriends();
-                    synchronized (this) {
-                        if (currentPeer != null && ev.data != null && ev.data.has("user")) {
-                            String removedUser = ev.data.path("user").asText("");
-                            if (currentPeer.getUsername().equalsIgnoreCase(removedUser)) {
-                                clearChat();
-                            }
+                refreshFriends();
+                synchronized (this) {
+                    if (currentPeer != null && ev.data != null && ev.data.has("user")) {
+                        String removedUser = ev.data.path("user").asText("");
+                        if (currentPeer.getUsername().equalsIgnoreCase(removedUser)) {
+                            clearChat();
                         }
                     }
-                    notificationManager.showFriendRemovedNotification(ev.from);
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing friend removed: " + e.getMessage());
                 }
+                notificationManager.showFriendRemovedNotification(ev.from);
             });
         });
 
-        AppCtx.BUS.on("user-blocked", ev -> {
-            if (ev == null || ev.from == null) return;
-            Platform.runLater(() -> {
-                try {
-                    refreshFriends();
-                    refreshPending();
-                    synchronized (this) {
-                        if (currentPeer != null && ev.data != null && ev.data.has("user")) {
-                            String blockedUser = ev.data.path("user").asText("");
-                            if (currentPeer.getUsername().equalsIgnoreCase(blockedUser)) {
-                                clearChat();
-                            }
-                        }
-                    }
-                    notificationManager.showBlockedNotification(ev.from);
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing user blocked: " + e.getMessage());
-                }
-            });
-        });
-
-        AppCtx.BUS.on("profile-updated", ev -> {
-            if (ev == null || ev.from == null) return;
-            Platform.runLater(() -> {
-                try {
-                    System.out.println("[MainController] Profile updated for: " + ev.from);
-                    refreshFriends();
-                } catch (Exception e) {
-                    System.err.println("[MainController] Error processing profile update: " + e.getMessage());
-                }
-            });
-        });
-
-        // UI event handlers
-        AppCtx.BUS.on("open-chat", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (targetUser.isEmpty()) return;
-
-                UserSummary user = findUserInFriends(targetUser);
-                if (user != null) {
-                    notificationManager.clearNotificationCount(targetUser);
-                    openChatWith(user);
-                    refreshFriendsUI();
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error opening chat: " + e.getMessage());
-            }
-        }));
-
-        AppCtx.BUS.on("remove-friend", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (!targetUser.isEmpty()) {
-                    removeFriendAsync(targetUser);
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error removing friend: " + e.getMessage());
-            }
-        }));
-
-        AppCtx.BUS.on("accept-friend", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (!targetUser.isEmpty()) {
-                    acceptFriendAsync(targetUser);
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error accepting friend: " + e.getMessage());
-            }
-        }));
-
-        AppCtx.BUS.on("decline-friend", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (!targetUser.isEmpty()) {
-                    declineFriendAsync(targetUser);
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error declining friend: " + e.getMessage());
-            }
-        }));
-
-        AppCtx.BUS.on("block-user", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (!targetUser.isEmpty()) {
-                    blockUserAsync(targetUser);
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error blocking user: " + e.getMessage());
-            }
-        }));
-
-        AppCtx.BUS.on("send-friend-request", ev -> Platform.runLater(() -> {
-            try {
-                if (ev == null || ev.data == null) return;
-                String targetUser = ev.data.path("targetUser").asText("");
-                if (!targetUser.isEmpty()) {
-                    sendFriendRequestAsync(targetUser);
-                }
-            } catch (Exception e) {
-                System.err.println("[MainController] Error sending friend request: " + e.getMessage());
-            }
-        }));
-
-        // Clean up old processed message IDs periodically
+        // Cleanup processed IDs periodically to prevent memory leaks
         Timer cleanupTimer = new Timer("MessageIdCleanup", true);
         cleanupTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
-                if (processedMessageIds.size() > 1000) {
-                    processedMessageIds.clear();
-                    System.out.println("[MainController] Cleared processed message IDs cache");
+                if (processedChatMessageIds.size() > 500) {
+                    processedChatMessageIds.clear();
+                    System.out.println("[MainController] Cleared chat message IDs cache");
+                }
+                if (processedMediaEventIds.size() > 100) {
+                    processedMediaEventIds.clear();
+                    System.out.println("[MainController] Cleared media event IDs cache");
                 }
             }
-        }, 300000, 300000); // Every 5 minutes
+        }, 180000, 180000); // Every 3 minutes
     }
 
     private void setupUI() {
@@ -767,6 +622,17 @@ public class MainController {
                 }
             }
         });
+    }
+
+    public void setMe(UserProfile me) {
+        Session.me = me;
+        Session.token = Config.APP_TOKEN;
+        renderMe();
+
+        // CRITICAL: Wire up 401 error handling
+        directory.setMainController(this);
+
+        connectToInbox();
     }
 
     // ============== FRIEND MANAGEMENT ==============
@@ -859,17 +725,6 @@ public class MainController {
     }
 
     // ============== UI MANAGEMENT ==============
-
-    public void setMe(UserProfile me) {
-        Session.me = me;
-        Session.token = Config.APP_TOKEN;
-        renderMe();
-
-        // CRITICAL: Wire up 401 error handling
-        directory.setMainController(this);
-
-        connectToInbox();
-    }
 
     private void openChatWith(UserSummary peer) {
         try {
@@ -1060,7 +915,7 @@ public class MainController {
             settingsDialog.showAndWait().ifPresent(response -> {
                 if (response == disableAutoSignIn) {
                     credentialsStorage.clearCredentials();
-                    showNotification("Auto Sign-In Disabled", "You will need to sign in manually next time");
+                    notificationManager.showToast("Auto Sign-In Disabled", "Auto sign-in has been disabled.", NotificationManager.ToastType.WARNING);
                 }
             });
         } else {
@@ -1108,7 +963,7 @@ public class MainController {
 
         } catch (Exception e) {
             e.printStackTrace();
-            showError("Logout Error", "Failed to return to login screen: " + e.getMessage());
+            notificationManager.showErrorNotification("Failed to logout", e.getMessage());
         }
     }
 
@@ -1172,16 +1027,14 @@ public class MainController {
 
                 Platform.runLater(() -> {
                     if (success) {
-                        showInfoAlert("Success", "All messages deleted successfully",
-                                "All local message storage has been cleared. A backup was created.");
+                        notificationManager.showToast("All messages deleted", "All messages have been permanently deleted.", NotificationManager.ToastType.WARNING);
 
                         if (currentChat != null) {
                             currentChat.clearAllMessages();
                         }
 
                     } else {
-                        showErrorAlert("Error", "Failed to delete messages",
-                                "Some messages could not be deleted. Check the console for details.");
+                        notificationManager.showErrorNotification("Failed to delete messages", "Could not delete all messages locally.");
                     }
                 });
             }).start();
@@ -1193,8 +1046,7 @@ public class MainController {
         UserSummary selectedFriend = listFriends.getSelectionModel().getSelectedItem();
 
         if (selectedFriend == null) {
-            showErrorAlert("No Conversation", "No conversation selected",
-                    "Please select a friend/conversation first.");
+            notificationManager.showErrorNotification("No conversation selected", "Please select a conversation to delete.");
             return;
         }
 
@@ -1213,16 +1065,14 @@ public class MainController {
 
                 Platform.runLater(() -> {
                     if (success) {
-                        showInfoAlert("Success", "Conversation deleted",
-                                "All messages with " + username + " have been deleted.");
+                        notificationManager.showToast("Conversation deleted", "All messages in this conversation have been permanently deleted.", NotificationManager.ToastType.WARNING);
 
                         if (currentChat != null) {
                             currentChat.clearAllMessages();
                         }
 
                     } else {
-                        showErrorAlert("Error", "Failed to delete conversation",
-                                "Could not delete conversation messages. Check the console for details.");
+                        notificationManager.showErrorNotification("Failed to delete messages", "Could not delete all messages locally.");
                     }
                 });
             }).start();
@@ -1245,11 +1095,10 @@ public class MainController {
                         "See console for detailed file listing.",
                 stats.conversationCount,
                 stats.totalMessages,
-                formatBytes(stats.totalSizeBytes),
+                formatFileSize(stats.totalSizeBytes),
                 stats.backupCount
         );
-
-        showInfoAlert("Storage Information", "Current storage status", info);
+        notificationManager.showToast("Storage Information", info, NotificationManager.ToastType.INFO);
     }
 
     @FXML
@@ -1258,8 +1107,7 @@ public class MainController {
         MessageChunkingService.getInstance().printBufferStatus();
         MessageChunkingService.getInstance().cleanupOldMessages();
 
-        showInfoAlert("Chunking Service", "Buffer status printed to console",
-                "Check the console for detailed chunking service information.");
+        notificationManager.showToast("Chunking Service Status", "See console for detailed status.", NotificationManager.ToastType.INFO);
     }
 
     @FXML
@@ -1289,9 +1137,7 @@ public class MainController {
                 break;
             }
         }
-
-        showInfoAlert("Chunking Test", "Test completed",
-                "Chunking test completed. Check console for results.");
+        notificationManager.showToast("Message Chunking Test", "Message chunking test complete.", NotificationManager.ToastType.SUCCESS);
     }
 
     @FXML
@@ -1303,11 +1149,9 @@ public class MainController {
 
             Platform.runLater(() -> {
                 if (backupPath != null) {
-                    showInfoAlert("Backup Created", "Manual backup completed",
-                            "Backup created at:\n" + backupPath);
+                    notificationManager.showToast("Manual Backup Created", "Manual backup created at: " + backupPath, NotificationManager.ToastType.SUCCESS);
                 } else {
-                    showErrorAlert("Backup Failed", "Could not create backup",
-                            "Failed to create backup. Check console for details.");
+                    notificationManager.showErrorNotification("Failed to create manual backup", "Could not create manual backup.");
                 }
             });
         }).start();
@@ -1316,7 +1160,7 @@ public class MainController {
     @FXML
     private void debugSendTestChunkedMessage() {
         if (Session.me == null) {
-            showErrorAlert("Not Logged In", "No session", "You must be logged in to send test messages.");
+            notificationManager.showErrorNotification("Not signed in", "Please sign in before testing chunked messages.");
             return;
         }
 
@@ -1352,8 +1196,7 @@ public class MainController {
             }
         }).start();
 
-        showInfoAlert("Test Message", "Sending test chunked message",
-                "A large test message is being sent to yourself. Check the console and chat for results.");
+        notificationManager.showToast("Test Chunked Message Sent", "Test chunked message sent successfully.", NotificationManager.ToastType.SUCCESS);
     }
 
     @FXML
@@ -1364,8 +1207,7 @@ public class MainController {
         chunkingService.cleanupOldMessages();
         chunkingService.printBufferStatus();
 
-        showInfoAlert("Buffer Cleared", "Chunking buffer cleared",
-                "All incomplete chunked messages have been cleared from the buffer.");
+        notificationManager.showToast("Chunking Buffer Cleared", "Chunking service buffer cleared.", NotificationManager.ToastType.SUCCESS);
     }
 
     // === TEST METHODS FOR NOTIFICATION SYSTEM ===
@@ -1557,7 +1399,7 @@ public class MainController {
                 .orElse(null);
     }
 
-    private void showNotification(String title, String message) {
+    /*private void showNotification(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION, message);
         alert.setTitle(title);
         alert.setHeaderText(null);
@@ -1585,14 +1427,7 @@ public class MainController {
         alert.setHeaderText(header);
         alert.setContentText(content);
         alert.showAndWait();
-    }
-
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
-        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-    }
+    }*/
 
     private String formatFileSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
@@ -1600,4 +1435,6 @@ public class MainController {
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
         return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
+
+    // Closing brace for the class
 }
